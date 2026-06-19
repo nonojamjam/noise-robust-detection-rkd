@@ -96,11 +96,8 @@
 <section><div class="wrap">
   <h2>How it works</h2>
   <p>Noise corrupts individual feature magnitudes, but the <b>relational geometry</b> between samples — encoded by a large self-supervised foundation model — is more stable. We transfer that geometry into a small detector via a distance-wise relational loss.</p>
-  <pre>Student (YOLOv8s) ──SPPF feature──▶ Adapter (MLP) ──┐
-                                                    ├──▶ distance-wise RKD loss
-Teacher (DINOv2, frozen, clean input) ──CLS token──┘
-Total loss = YOLO(det+seg) + λ · RKD      (λ = 0.5)
-At inference: teacher + adapter removed → plain YOLOv8s-seg (zero overhead).</pre>
+  <img src="assets/pipeline.png" alt="KD training pipeline: DINOv2 teacher + YOLOv8 student + MLP adapter → RKD + detection loss" style="width:100%;border-radius:10px;background:#fff;padding:12px;margin:4px 0">
+  <p class="note">Training pipeline. <b>Total loss = YOLO(det+seg) + λ·RKD</b> (λ=0.5). At inference the teacher and adapter are removed → plain YOLOv8s-seg, zero overhead.</p>
   <ul>
     <li><b>Heterogeneous</b> ViT→CNN transfer (most KD assumes the same architecture family).</li>
     <li><b>50:50 mixed-noise training</b> — the teacher always sees clean input; the student sees half-noisy batches.</li>
