@@ -1,0 +1,6 @@
+torch>=2.0
+torchvision
+ultralytics>=8.4.62
+numpy
+pyyaml
+# DINOv2 teacher is pulled via torch.hub: facebookresearch/dinov2 (dinov2_vitb14)
