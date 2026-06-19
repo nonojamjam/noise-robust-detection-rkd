@@ -3,15 +3,17 @@
 **DINOv2 (ViT) → YOLOv8s-seg (CNN): transferring relational structure to keep a lightweight detector accurate under sensor noise.**
 
 > Capstone research project, Chungbuk National University (Dept. of Electronic Engineering).
-> Author of all ML / code work: **Juhyeok Park** · Advisor: Prof. Hyeongwon Kim · Co-author (data/docs): Jiwon Lee.
+> ML and all code: **Juhyeok Park**. Data preparation and documentation: Jiwon Lee. Advisor: Prof. Hyeongwon Kim.
 
 ---
 
 ## TL;DR
 
-Lightweight detectors collapse under satellite/aerial sensor noise. I distill the **relational (pairwise-distance) structure** of a frozen self-supervised foundation model (DINOv2 ViT-B/14) into a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training.
+Lightweight detectors degrade sharply under satellite/aerial sensor noise. I distill the **relational (pairwise-distance) structure** of a frozen self-supervised foundation model (DINOv2 ViT-B/14) into a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training.
 
-On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this recovers detection performance **while also improving the clean-domain score** — with **zero added inference cost** (the teacher and the alignment adapter are detached at inference).
+On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this improves detection under noise and, in our experiments, also gains on the clean domain — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
+
+> All reported numbers are single-seed (seed=0) runs; see [Limitations](#honest-limitations--next-directions).
 
 | Condition (50 epochs, fair comparison) | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
 |---|---|---|
@@ -41,6 +43,9 @@ Final deployed model: `YOLOv8s-seg`, **11.8M params / 22MB** — teacher + adapt
 
 **Core idea:** noise corrupts individual feature magnitudes, but the *relational geometry* between samples (encoded by the foundation model) is more stable. Transferring that geometry via RKD keeps the small student generalizing under degradation.
 
+<!-- TODO: add Method Overview figure -->
+<!-- ![Method Overview](docs/pipeline.png) -->
+
 ```
 Student (YOLOv8s) ──SPPF feature──► Adapter (MLP) ──┐
                                                      ├──► distance-wise RKD loss
@@ -65,7 +70,9 @@ At inference: teacher + adapter removed → plain YOLOv8s-seg.
 
 **Qualitative (P1130 aircraft tile, σ=0.05):** BaseLine0 detects **0** objects (total failure); N1_MIXED detects **2** aircraft correctly.
 
-## My contribution (Juhyeok Park — sole owner of the ML / code pipeline)
+## Contributions
+
+All ML and code by **Juhyeok Park**; data preparation and documentation by Jiwon Lee.
 
 - **Heterogeneous RKD loss** — formulated and implemented the distance-wise relational loss to align a ViT teacher with a CNN student (`src/n1mixed_kd_trainer.py:rkd_loss`).
 - **Custom Ultralytics trainer** (`N1MixedKDTrainer`) — SPPF forward-hook feature extraction, MLP adapter, and 50:50 mixed-noise injection inside the training loop, with the teacher always seeing clean input.
@@ -95,5 +102,15 @@ eval/noise_sweep.py         # σ-sweep evaluation on iSAID
 results/                    # comparison figures / tables
 configs/                    # hyperparameters
 ```
+
+### Quick start
+
+```bash
+pip install -r requirements.txt
+# Edit the CONFIG block at the top of src/n1mixed_kd_trainer.py
+# (checkpoint path, dataset yaml) for your environment, then:
+python -c "from src.n1mixed_kd_trainer import run_n1mixed; run_n1mixed()"
+```
+The DINOv2 teacher is fetched automatically via `torch.hub`. Training was run on a Kaggle A100; see the reproducibility note below.
 
 > **Reproducibility note:** trained on Kaggle A100 (Ultralytics 8.4.62+, PyTorch, iSAID YOLO-seg format). Paths in `src/n1mixed_kd_trainer.py` (CONFIG block) are set for that environment; adjust them to run elsewhere. Key settings: 50 epochs, batch 8, imgsz 640, λ=0.5, mixed-noise ratio 0.5, eval σ=0.3.
