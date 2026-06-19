@@ -2,6 +2,8 @@
 
 **DINOv2 (ViT) → YOLOv8s-seg (CNN): transferring relational structure to keep a lightweight detector accurate under sensor noise.**
 
+🔗 **[Live demo →](https://nonojamjam.github.io/noise-robust-detection-rkd/)** — drag the noise slider and watch the baseline go blind while the distilled model holds.
+
 > Capstone research project, Chungbuk National University (Dept. of Electronic Engineering).
 > ML and all code: **Juhyeok Park**. Data preparation and documentation: Jiwon Lee. Advisor: Prof. Hyeongwon Kim.
 

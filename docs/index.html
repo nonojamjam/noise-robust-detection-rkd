@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noise-Robust Object Detection via Heterogeneous Relational KD</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#262b36; --txt:#e6e9ef; --mut:#9aa3b2;
+    --accent:#6ea8fe; --green:#39d98a; --red:#ff6b6b; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    line-height:1.6}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:880px;margin:0 auto;padding:0 20px}
+  header{padding:64px 0 32px;border-bottom:1px solid var(--line)}
+  h1{font-size:2rem;line-height:1.25;margin:0 0 12px}
+  .lead{font-size:1.15rem;color:var(--mut);margin:0 0 8px}
+  .kr{font-size:.95rem;color:var(--mut);opacity:.8}
+  .by{font-size:.9rem;color:var(--mut);margin-top:18px}
+  .by b{color:var(--txt)}
+  section{padding:44px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:1.35rem;margin:0 0 18px}
+  h3{font-size:1rem;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin:0 0 10px}
+  p{margin:0 0 14px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:26px 0 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .stat .v{font-size:1.5rem;font-weight:700}
+  .stat .v .from{color:var(--mut);font-size:1rem;font-weight:400}
+  .stat .v .to{color:var(--green)}
+  .stat .k{font-size:.85rem;color:var(--mut);margin-top:4px}
+  /* demo */
+  .demo{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .stage{position:relative;border-radius:10px;overflow:hidden;background:#000;display:flex;justify-content:center}
+  .stage img{display:block;max-width:340px;width:100%;height:auto;image-rendering:auto}
+  .legend{display:flex;gap:18px;justify-content:center;margin:14px 0 4px;font-size:.9rem;flex-wrap:wrap}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .dot.r{background:var(--red)} .dot.g{background:var(--green)}
+  .sliderbox{margin:18px 0 6px}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .ticks{display:flex;justify-content:space-between;font-size:.8rem;color:var(--mut);margin-top:4px;font-family:var(--mono)}
+  .verdict{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+  .vc{border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.92rem}
+  .vc .h{font-weight:600;margin-bottom:2px}
+  .vc.base .h{color:var(--red)} .vc.prop .h{color:var(--green)}
+  .vc .s{color:var(--mut);font-size:.85rem}
+  table{width:100%;border-collapse:collapse;font-size:.92rem;margin:6px 0 0}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:center}
+  th{background:var(--card);color:var(--mut);font-weight:600}
+  td.l,th.l{text-align:left}
+  .hi{color:var(--green);font-weight:700}
+  pre{background:#0b0d12;border:1px solid var(--line);border-radius:10px;padding:16px;overflow:auto;font-family:var(--mono);font-size:.85rem}
+  ul{margin:0 0 14px;padding-left:20px} li{margin:4px 0}
+  .note{font-size:.85rem;color:var(--mut)}
+  footer{padding:36px 0 64px;color:var(--mut);font-size:.9rem}
+  .btn{display:inline-block;background:var(--accent);color:#08101f;font-weight:600;padding:10px 16px;border-radius:9px;margin-top:8px}
+  .btn:hover{text-decoration:none;opacity:.92}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Noise-Robust Object Detection via<br>Heterogeneous Relational Knowledge Distillation</h1>
+  <p class="lead">Distilling the relational structure of DINOv2 (ViT) into a lightweight YOLOv8 (CNN) detector — so it keeps seeing through sensor noise.</p>
+  <p class="kr">위성·항공 영상의 센서 노이즈 환경에서 경량 탐지기의 강건성을 이종 관계 지식증류로 확보</p>
+  <p class="by">ML &amp; all code: <b>Juhyeok Park</b> · data/docs: Jiwon Lee · advisor: Prof. Hyeongwon Kim · Capstone, Chungbuk National University</p>
+  <div class="stats">
+    <div class="stat"><div class="v"><span class="from">0.009</span> → <span class="to">0.196</span></div><div class="k">Noisy mAP50 (σ=0.3)</div></div>
+    <div class="stat"><div class="v"><span class="from">0.278</span> → <span class="to">0.426</span></div><div class="k">Clean mAP50</div></div>
+    <div class="stat"><div class="v">11.8M <span class="from">/ 22MB</span></div><div class="k">Deployed model size</div></div>
+    <div class="stat"><div class="v">+0<span class="from"> cost</span></div><div class="k">Added inference cost</div></div>
+  </div>
+</div></header>
+
+<section><div class="wrap">
+  <h3>Try it — drag the noise up</h3>
+  <h2>Watch the baseline go blind while the distilled model holds</h2>
+  <p>Same aircraft tile, increasing Gaussian noise. <b style="color:var(--red)">Top = Baseline</b> (plain transfer learning). <b style="color:var(--green)">Bottom = Proposed</b> (DINOv2→YOLOv8 relational KD). Drag the slider.</p>
+  <div class="demo">
+    <div class="stage"><img id="frame" src="assets/nr_sigma3.png" alt="noise comparison"></div>
+    <div class="legend"><span><span class="dot r"></span>Baseline (KD off)</span><span><span class="dot g"></span>Proposed (relational KD)</span></div>
+    <div class="sliderbox">
+      <input type="range" id="sig" min="0" max="3" step="1" value="3">
+      <div class="ticks"><span>σ=0</span><span>σ=0.1</span><span>σ=0.2</span><span>σ=0.3</span></div>
+    </div>
+    <div class="verdict">
+      <div class="vc base"><div class="h">Baseline</div><div class="s" id="vbase">collapses — detection lost</div></div>
+      <div class="vc prop"><div class="h">Proposed</div><div class="s" id="vprop">still detects the aircraft</div></div>
+    </div>
+    <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b> — and is <i>better</i> on clean data too. Qualitative tile from iSAID validation (P1130).</p>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>How it works</h2>
+  <p>Noise corrupts individual feature magnitudes, but the <b>relational geometry</b> between samples — encoded by a large self-supervised foundation model — is more stable. We transfer that geometry into a small detector via a distance-wise relational loss.</p>
+  <pre>Student (YOLOv8s) ──SPPF feature──▶ Adapter (MLP) ──┐
+                                                    ├──▶ distance-wise RKD loss
+Teacher (DINOv2, frozen, clean input) ──CLS token──┘
+Total loss = YOLO(det+seg) + λ · RKD      (λ = 0.5)
+At inference: teacher + adapter removed → plain YOLOv8s-seg (zero overhead).</pre>
+  <ul>
+    <li><b>Heterogeneous</b> ViT→CNN transfer (most KD assumes the same architecture family).</li>
+    <li><b>50:50 mixed-noise training</b> — the teacher always sees clean input; the student sees half-noisy batches.</li>
+    <li><b>Detached at inference</b> — the deployed model is unchanged in size and speed.</li>
+  </ul>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Results</h2>
+  <h3>50-epoch fair comparison</h3>
+  <table>
+    <tr><th class="l">Condition</th><th>Clean mAP50</th><th>Noisy mAP50 (σ=0.3)</th></tr>
+    <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>
+    <tr><td class="l">N1_MIXED (proposed)</td><td class="hi">0.4264</td><td class="hi">0.1961</td></tr>
+  </table>
+  <h3 style="margin-top:26px">10-epoch ablation — isolating KD vs. noise</h3>
+  <table>
+    <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean</th><th>Noisy</th><th>KD Δ (Clean)</th></tr>
+    <tr><td class="l">BaseLine0</td><td>✗</td><td>✗</td><td>0.1243</td><td>0.0152</td><td>—</td></tr>
+    <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2849</td><td>0.0390</td><td class="hi">+0.1606</td></tr>
+    <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.1386</td><td>0.1728</td><td>—</td></tr>
+    <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2277</td><td>0.1799</td><td>+0.0897</td></tr>
+  </table>
+  <p class="note" style="margin-top:14px">KD alone (C1) lifts clean mAP50 by +0.1606 → heterogeneous ViT→CNN transfer is effective. The two strategies are complementary, not a trade-off. All numbers are single-seed (seed=0) runs.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Run it yourself</h2>
+  <pre>git clone https://github.com/nonojamjam/noise-robust-detection-rkd
+cd noise-robust-detection-rkd
+pip install -r requirements.txt
+
+# Edit the CONFIG block in src/n1mixed_kd_trainer.py
+# (checkpoint path + dataset yaml), then:
+python -c "from src.n1mixed_kd_trainer import run_n1mixed; run_n1mixed()"</pre>
+  <p class="note">The DINOv2 teacher is fetched automatically via <code>torch.hub</code>. Trained on a Kaggle A100 (Ultralytics 8.4.62+, iSAID YOLO-seg format).</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>My contribution &amp; honest limits</h2>
+  <p><b>All ML and code</b> by Juhyeok Park: the distance-wise RKD loss, a custom Ultralytics trainer (SPPF hook + MLP adapter + mixed-noise injection), and three framework-level fixes that unblocked training (<code>model.loss</code> wrapping, optimizer param-group mismatch on resume, adapter-sidecar save/load), plus the ablation and evaluation design.</p>
+  <p class="note"><b>Limits (kept honest):</b> single seed, Gaussian noise + iSAID only, λ fixed at 0.5. <b>Next:</b> multi-seed + λ sweep, cross-dataset (DOTA/xView) &amp; compound degradation, and federated-learning integration for data that can't leave the node (a SCAFFOLD/FedAvg prototype exists; exploratory, not in the benchmark above).</p>
+  <a class="btn" href="https://github.com/nonojamjam/noise-robust-detection-rkd">View the code on GitHub →</a>
+</div></section>
+
+<footer><div class="wrap">
+  Juhyeok Park · Chungbuk National University, Dept. of Electronic Engineering ·
+  <a href="https://github.com/nonojamjam/noise-robust-detection-rkd">GitHub</a>
+</div></footer>
+
+<script>
+  const frame = document.getElementById('frame');
+  const sig   = document.getElementById('sig');
+  const vbase = document.getElementById('vbase');
+  const vprop = document.getElementById('vprop');
+  const states = [
+    {b:"detects normally",            s:"baseline OK at zero noise"},
+    {b:"detection weakening",         s:"holds clearly"},
+    {b:"detection breaking down",     s:"still locked on"},
+    {b:"collapses — detection lost",  s:"still detects the aircraft"}
+  ];
+  function render(i){
+    frame.src = `assets/nr_sigma${i}.png`;
+    vbase.textContent = states[i].b;
+    vprop.textContent = states[i].s;
+  }
+  sig.addEventListener('input', e => render(+e.target.value));
+  render(+sig.value);
+</script>
+</body>
+</html>
