@@ -32,21 +32,18 @@
   .stat .v .from{color:var(--mut);font-size:1rem;font-weight:400}
   .stat .v .to{color:var(--green)}
   .stat .k{font-size:.85rem;color:var(--mut);margin-top:4px}
-  /* demo */
+  /* demo — before/after comparison slider */
   .demo{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
-  .stage{position:relative;border-radius:10px;overflow:hidden;background:#000;display:flex;justify-content:center}
-  .stage img{display:block;max-width:340px;width:100%;height:auto;image-rendering:auto}
-  .legend{display:flex;gap:18px;justify-content:center;margin:14px 0 4px;font-size:.9rem;flex-wrap:wrap}
-  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:middle}
   .dot.r{background:var(--red)} .dot.g{background:var(--green)}
-  .sliderbox{margin:18px 0 6px}
-  input[type=range]{width:100%;accent-color:var(--accent)}
-  .ticks{display:flex;justify-content:space-between;font-size:.8rem;color:var(--mut);margin-top:4px;font-family:var(--mono)}
-  .verdict{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
-  .vc{border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:.92rem}
-  .vc .h{font-weight:600;margin-bottom:2px}
-  .vc.base .h{color:var(--red)} .vc.prop .h{color:var(--green)}
-  .vc .s{color:var(--mut);font-size:.85rem}
+  .ba{position:relative;width:100%;max-width:560px;margin:0 auto;border-radius:10px;overflow:hidden;user-select:none;aspect-ratio:1174/1090;background:#000}
+  .ba img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+  .ba-top{clip-path:inset(0 45% 0 0)}
+  .ba-div{position:absolute;top:0;bottom:0;left:55%;width:2px;background:#fff;transform:translateX(-1px);pointer-events:none}
+  .ba-handle{position:absolute;top:50%;left:55%;transform:translate(-50%,-50%);width:38px;height:38px;border-radius:50%;background:#fff;color:#111;display:flex;align-items:center;justify-content:center;font-size:1rem;box-shadow:0 2px 10px rgba(0,0,0,.5);pointer-events:none}
+  .ba-tag{position:absolute;bottom:10px;font-size:.78rem;font-weight:600;padding:4px 9px;border-radius:7px;background:rgba(8,10,16,.78)}
+  .ba-tag.l{left:10px;color:#ffb4b4} .ba-tag.r{right:10px;color:#9ff0c4}
+  input[type=range]{width:100%;max-width:560px;margin:16px auto 0;display:block;accent-color:var(--accent)}
   table{width:100%;border-collapse:collapse;font-size:.92rem;margin:6px 0 0}
   th,td{border:1px solid var(--line);padding:8px 10px;text-align:center}
   th{background:var(--card);color:var(--mut);font-weight:600}
@@ -75,21 +72,20 @@
 </div></header>
 
 <section><div class="wrap">
-  <h3>Try it — drag the noise up</h3>
-  <h2>Watch the baseline go blind while the distilled model holds</h2>
-  <p>Same aircraft tile, increasing Gaussian noise. <b style="color:var(--red)">Top = Baseline</b> (plain transfer learning). <b style="color:var(--green)">Bottom = Proposed</b> (DINOv2→YOLOv8 relational KD). Drag the slider.</p>
+  <h3>Try it — drag to compare</h3>
+  <h2>Under the same heavy noise, the baseline goes blind — the distilled model still sees</h2>
+  <p>Same iSAID tile (P1130 aircraft) at strong Gaussian noise (σ=0.3). Drag the handle: <b style="color:var(--red)">left = Baseline</b> (plain transfer learning) finds nothing; <b style="color:var(--green)">right = Proposed</b> (DINOv2→YOLOv8 relational KD) keeps the lock.</p>
   <div class="demo">
-    <div class="stage"><img id="frame" src="assets/nr_sigma3.png" alt="noise comparison"></div>
-    <div class="legend"><span><span class="dot r"></span>Baseline (KD off)</span><span><span class="dot g"></span>Proposed (relational KD)</span></div>
-    <div class="sliderbox">
-      <input type="range" id="sig" min="0" max="3" step="1" value="3">
-      <div class="ticks"><span>σ=0</span><span>σ=0.1</span><span>σ=0.2</span><span>σ=0.3</span></div>
+    <div class="ba" id="ba">
+      <img class="ba-base" src="assets/n1.png" alt="Proposed model detects the aircraft under noise">
+      <img class="ba-top" id="baTop" src="assets/bl0.png" alt="Baseline model fails under noise">
+      <div class="ba-div" id="baDiv"></div>
+      <div class="ba-handle" id="baHandle"><span>⟷</span></div>
+      <span class="ba-tag l"><span class="dot r" style="margin-right:5px"></span>Baseline · 0 detections</span>
+      <span class="ba-tag r">Proposed · detects ✓<span class="dot g" style="margin-left:6px"></span></span>
     </div>
-    <div class="verdict">
-      <div class="vc base"><div class="h">Baseline</div><div class="s" id="vbase">collapses — detection lost</div></div>
-      <div class="vc prop"><div class="h">Proposed</div><div class="s" id="vprop">still detects the aircraft</div></div>
-    </div>
-    <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b> — and is <i>better</i> on clean data too. Qualitative tile from iSAID validation (P1130).</p>
+    <input type="range" id="wipe" min="0" max="100" value="55" aria-label="compare baseline and proposed">
+    <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b> — and scores higher on clean data too. Qualitative tile from iSAID validation.</p>
   </div>
 </div></section>
 
@@ -149,23 +145,30 @@ python -c "from src.n1mixed_kd_trainer import run_n1mixed; run_n1mixed()"</pre>
 </div></footer>
 
 <script>
-  const frame = document.getElementById('frame');
-  const sig   = document.getElementById('sig');
-  const vbase = document.getElementById('vbase');
-  const vprop = document.getElementById('vprop');
-  const states = [
-    {b:"detects normally",            s:"baseline OK at zero noise"},
-    {b:"detection weakening",         s:"holds clearly"},
-    {b:"detection breaking down",     s:"still locked on"},
-    {b:"collapses — detection lost",  s:"still detects the aircraft"}
-  ];
-  function render(i){
-    frame.src = `assets/nr_sigma${i}.png`;
-    vbase.textContent = states[i].b;
-    vprop.textContent = states[i].s;
+  const wipe   = document.getElementById('wipe');
+  const baTop  = document.getElementById('baTop');
+  const baDiv  = document.getElementById('baDiv');
+  const baHnd  = document.getElementById('baHandle');
+  const ba     = document.getElementById('ba');
+  function setWipe(v){
+    v = Math.max(0, Math.min(100, v));
+    baTop.style.clipPath = `inset(0 ${100 - v}% 0 0)`;
+    baDiv.style.left = v + '%';
+    baHnd.style.left = v + '%';
+    if (wipe.value != v) wipe.value = v;
   }
-  sig.addEventListener('input', e => render(+e.target.value));
-  render(+sig.value);
+  wipe.addEventListener('input', e => setWipe(+e.target.value));
+  // drag anywhere on the image
+  let dragging = false;
+  function fromEvent(e){
+    const r = ba.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    setWipe(Math.round(x / r.width * 100));
+  }
+  ba.addEventListener('pointerdown', e => { dragging = true; fromEvent(e); });
+  window.addEventListener('pointermove', e => { if (dragging) fromEvent(e); });
+  window.addEventListener('pointerup', () => { dragging = false; });
+  setWipe(55);
 </script>
 </body>
 </html>
