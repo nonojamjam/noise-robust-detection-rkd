@@ -103,7 +103,11 @@
 
 <section><div class="wrap">
   <h2>Results</h2>
-  <h3>50-epoch fair comparison</h3>
+  <h3>50-epoch runs</h3>
+  <p class="note" style="margin:6px 0 10px"><strong>⚠️ These two runs do not share hyperparameters</strong>
+  and are not a controlled comparison (verified 2026-09-08 from each checkpoint's <code>train_args</code>):
+  BaseLine0 = batch 2, imgsz 800, AdamW; N1_MIXED = batch 8, imgsz 640, auto.
+  The 10-epoch ablation below <em>is</em> controlled.</p>
   <table>
     <tr><th class="l">Condition</th><th>Clean mAP50</th><th>Noisy mAP50 (σ=0.3)</th></tr>
     <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>

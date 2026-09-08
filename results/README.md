@@ -2,7 +2,13 @@
 
 All numbers are from the submitted capstone benchmark (iSAID, 16 classes, standalone eval `half=True`).
 
-## 50-epoch fair comparison
+## 50-epoch runs
+
+> ⚠️ **These two runs do not share hyperparameters** and are not a controlled comparison.
+> Verified 2026-09-08 by reading `train_args` off both checkpoints:
+> BaseLine0 = `batch=2, imgsz=800, optimizer=AdamW`; N1_MIXED = `batch=8, imgsz=640, optimizer=auto`.
+> The 10-epoch ablation below **is** controlled — all four conditions share hardware,
+> hyperparameters, and code.
 
 | Condition | Epoch | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
 |---|---|---|---|

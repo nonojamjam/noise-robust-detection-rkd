@@ -17,10 +17,16 @@ On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this improves detec
 
 > All reported numbers are single-seed (seed=0) runs; see [Limitations](#honest-limitations--next-directions).
 
-| Condition (50 epochs, fair comparison) | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
+| Condition (50 epochs) | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
 |---|---|---|
 | BaseLine0 (plain transfer learning) | 0.2775 | 0.0090 |
 | **N1_MIXED (proposed)** | **0.4264** | **0.1961** |
+
+> ⚠️ **These two runs do not share hyperparameters** and should not be read as a controlled
+> comparison (checked 2026-09-08 by reading `train_args` off both checkpoints):
+> BaseLine0 was trained with `batch=2, imgsz=800, optimizer=AdamW`; N1_MIXED with
+> `batch=8, imgsz=640, optimizer=auto`. The 10-epoch ablation below **is** controlled —
+> all four conditions share hardware, hyperparameters and code.
 
 Final deployed model: `YOLOv8s-seg`, **11.8M params / 22MB** — teacher + adapter fully removed at inference.
 
@@ -71,9 +77,9 @@ At inference: teacher + adapter removed → plain YOLOv8s-seg.
 - **Mixed-noise training is the dominant factor** under noise: +0.163 (A_NOISY vs. BaseLine0), versus +0.005 from KD on top of it.
 - The two are **additive under noise** (interaction ≈ +0.0015) but mixed-noise training **costs clean accuracy**: −0.060 ± 0.002 across two seeds.
 - **At 10 epochs the two are not free of each other**: mixed-noise training trades ~0.06 clean mAP50
-  for +0.163 under noise. At 50 epochs the sign flips (N1_MIXED clean 0.4264 vs. BaseLine0 0.2775),
-  so it is still open whether this trade-off is fundamental or an artifact of undertraining —
-  all three conditions were still improving monotonically at epoch 10.
+  for +0.163 under noise (−0.060 ± 0.002 across two seeds).
+  Whether this is fundamental or an artifact of undertraining is **open** — all three conditions
+  were still improving monotonically at epoch 10, and none had converged.
 
 **Qualitative (P1130 aircraft tile, σ=0.05):** BaseLine0 detects **0** objects (total failure); N1_MIXED detects **2** aircraft correctly.
 
