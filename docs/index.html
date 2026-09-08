@@ -112,12 +112,12 @@
   <h3 style="margin-top:26px">10-epoch ablation — isolating KD vs. noise</h3>
   <table>
     <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean</th><th>Noisy</th><th>KD Δ (Clean)</th></tr>
-    <tr><td class="l">BaseLine0</td><td>✗</td><td>✗</td><td>0.1243</td><td>0.0152</td><td>—</td></tr>
-    <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2849</td><td>0.0390</td><td class="hi">+0.1606</td></tr>
-    <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.1386</td><td>0.1728</td><td>—</td></tr>
-    <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2277</td><td>0.1799</td><td>+0.0897</td></tr>
+    <tr><td class="l">BaseLine0</td><td>✗</td><td>✗</td><td>0.2840</td><td>0.0149</td><td>—</td></tr>
+    <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2974</td><td>0.0179</td><td class="hi">+0.0134</td></tr>
+    <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.2252</td><td>0.1776</td><td>—</td></tr>
+    <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2312</td><td>0.1821</td><td>+0.0060</td></tr>
   </table>
-  <p class="note" style="margin-top:14px">KD alone (C1) lifts clean mAP50 by +0.1606 → heterogeneous ViT→CNN transfer is effective. The two strategies are complementary, not a trade-off. All numbers are single-seed (seed=0) runs.</p>
+  <p class="note" style="margin-top:14px">KD alone (C1) lifts clean mAP50 by +0.0134. The dominant factor under noise is mixed-noise training (+0.163), not distillation (+0.005 on top). The two are additive under noise (interaction ≈ +0.0015), but mixed-noise training costs clean accuracy (−0.060 ± 0.002 across two seeds). Re-measured 2026-09-08 after finding the original baseline had been trained for 2 epochs, not 10.</p>
 </div></section>
 
 <section><div class="wrap">

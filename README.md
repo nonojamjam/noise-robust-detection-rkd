@@ -62,13 +62,18 @@ At inference: teacher + adapter removed → plain YOLOv8s-seg.
 
 | Condition | KD | Noise | Clean mAP50 | Noisy mAP50 | KD Δ (Clean) |
 |---|---|---|---|---|---|
-| BaseLine0 | ✗ | ✗ | 0.1243 | 0.0152 | — |
-| C1 | ✅ | ✗ | 0.2849 | 0.0390 | **+0.1606** |
-| A_NOISY | ✗ | ✅ | 0.1386 | 0.1728 | — |
-| **N1_MIXED** | ✅ | ✅ | 0.2277 | 0.1799 | +0.0897 (vs. noise-only) |
+| BaseLine0 | ✗ | ✗ | 0.2840 | 0.0149 | — |
+| C1 | ✅ | ✗ | 0.2974 | 0.0179 | **+0.0134** |
+| A_NOISY | ✗ | ✅ | 0.2252 | 0.1776 | — |
+| **N1_MIXED** | ✅ | ✅ | 0.2312 | 0.1821 | +0.0060 (vs. noise-only) |
 
-- **KD alone** (C1 vs. BaseLine0): +0.1606 Clean mAP50 → heterogeneous ViT→CNN transfer is effective.
-- **Two strategies are complementary**, not a trade-off: N1_MIXED leads on both Clean and Noisy.
+- **KD alone** (C1 vs. BaseLine0): **+0.0134** Clean mAP50 — heterogeneous ViT→CNN transfer helps, but modestly.
+- **Mixed-noise training is the dominant factor** under noise: +0.163 (A_NOISY vs. BaseLine0), versus +0.005 from KD on top of it.
+- The two are **additive under noise** (interaction ≈ +0.0015) but mixed-noise training **costs clean accuracy**: −0.060 ± 0.002 across two seeds.
+- **At 10 epochs the two are not free of each other**: mixed-noise training trades ~0.06 clean mAP50
+  for +0.163 under noise. At 50 epochs the sign flips (N1_MIXED clean 0.4264 vs. BaseLine0 0.2775),
+  so it is still open whether this trade-off is fundamental or an artifact of undertraining —
+  all three conditions were still improving monotonically at epoch 10.
 
 **Qualitative (P1130 aircraft tile, σ=0.05):** BaseLine0 detects **0** objects (total failure); N1_MIXED detects **2** aircraft correctly.
 
