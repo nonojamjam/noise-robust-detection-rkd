@@ -64,8 +64,8 @@
   <p class="kr">위성·항공 영상의 센서 노이즈 환경에서 경량 탐지기의 강건성을 이종 관계 지식증류로 확보</p>
   <p class="by">ML &amp; all code: <b>Juhyeok Park</b> · data/docs: Jiwon Lee · advisor: Prof. Hyeongwon Kim · Capstone, Chungbuk National University</p>
   <div class="stats">
-    <div class="stat"><div class="v"><span class="from">0.009</span> → <span class="to">0.196</span></div><div class="k">Noisy mAP50 (σ=0.3)</div></div>
-    <div class="stat"><div class="v"><span class="from">0.278</span> → <span class="to">0.426</span></div><div class="k">Clean mAP50</div></div>
+    <div class="stat"><div class="v"><span class="from">0.015</span> → <span class="to">0.182</span></div><div class="k">Noisy mAP50 (σ=0.3) · controlled 10-ep, 2 seeds</div></div>
+    <div class="stat"><div class="v"><span class="from">0.284</span> → <span class="to">0.231</span></div><div class="k">Clean mAP50 · the cost of robustness</div></div>
     <div class="stat"><div class="v">11.8M <span class="from">/ 22MB</span></div><div class="k">Deployed model size</div></div>
     <div class="stat"><div class="v">+0<span class="from"> cost</span></div><div class="k">Added inference cost</div></div>
   </div>
@@ -85,7 +85,7 @@
       <span class="ba-tag r">Proposed · detects ✓<span class="dot g" style="margin-left:6px"></span></span>
     </div>
     <input type="range" id="wipe" min="0" max="100" value="55" aria-label="compare baseline and proposed">
-    <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b> — and scores higher on clean data too. Qualitative tile from iSAID validation.</p>
+    <p class="note" style="margin-top:14px">At σ=0.3 the clean-only baseline drops to <b>mAP50 0.015</b> (near-total failure); the proposed model holds <b>0.182</b>, at a cost of <b>−0.053</b> on clean tiles. Of the noisy gain, <b>+0.163 comes from training on noise and +0.005 from distillation</b>. Qualitative tile from iSAID validation; numbers are the controlled 10-epoch runs below.</p>
   </div>
 </div></section>
 
@@ -103,17 +103,7 @@
 
 <section><div class="wrap">
   <h2>Results</h2>
-  <h3>50-epoch runs</h3>
-  <p class="note" style="margin:6px 0 10px"><strong>⚠️ These two runs do not share hyperparameters</strong>
-  and are not a controlled comparison (verified 2026-09-08 from each checkpoint's <code>train_args</code>):
-  BaseLine0 = batch 2, imgsz 800, AdamW; N1_MIXED = batch 8, imgsz 640, auto.
-  The 10-epoch ablation below <em>is</em> controlled.</p>
-  <table>
-    <tr><th class="l">Condition</th><th>Clean mAP50</th><th>Noisy mAP50 (σ=0.3)</th></tr>
-    <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>
-    <tr><td class="l">N1_MIXED (proposed)</td><td class="hi">0.4264</td><td class="hi">0.1961</td></tr>
-  </table>
-  <h3 style="margin-top:26px">10-epoch ablation — isolating KD vs. noise</h3>
+  <h3>10-epoch ablation — isolating KD vs. noise (controlled: same hardware, hyperparameters, code)</h3>
   <table>
     <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean</th><th>Noisy</th><th>KD Δ (Clean)</th></tr>
     <tr><td class="l">BaseLine0</td><td>✗</td><td>✗</td><td>0.2840</td><td>0.0149</td><td>—</td></tr>
@@ -121,7 +111,15 @@
     <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.2252</td><td>0.1776</td><td>—</td></tr>
     <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2312</td><td>0.1821</td><td>+0.0060</td></tr>
   </table>
-  <p class="note" style="margin-top:14px">KD alone (C1) lifts clean mAP50 by +0.0134. The dominant factor under noise is mixed-noise training (+0.163), not distillation (+0.005 on top). The two are additive under noise (interaction ≈ +0.0015), but mixed-noise training costs clean accuracy (−0.060 ± 0.002 across two seeds). Re-measured 2026-09-08 after finding the original baseline had been trained for 2 epochs, not 10.</p>
+  <p class="note" style="margin-top:14px">KD alone (C1) lifts clean mAP50 by +0.0134. The dominant factor under noise is mixed-noise training (+0.163), not distillation (+0.005 on top). The two are additive under noise (interaction ≈ +0.0015), but mixed-noise training costs clean accuracy (−0.060 ± 0.002 across two seeds). Re-measured 2026-09-08 after finding the original baseline had been trained for 2 epochs, not 10. BaseLine0 and A_NOISY were repeated with seed 1: the noisy gain is +0.1627 / +0.1637 across seeds; the recovery <em>ratio</em> moved from ×11.9 to ×15.5, which is why ratios are not reported.</p>
+  <details style="margin-top:18px"><summary class="note" style="cursor:pointer">Record: the earlier 50-epoch runs (not a controlled comparison)</summary>
+  <p class="note" style="margin:6px 0 10px">Kept for the record. <strong>These two runs do not share hyperparameters</strong> (verified 2026-09-08 from each checkpoint's <code>train_args</code>): BaseLine0 = batch 2, imgsz 800, AdamW; N1_MIXED = batch 8, imgsz 640, auto. They were the original headline and should not be read as an effect size.</p>
+  <table>
+    <tr><th class="l">Condition (50 ep)</th><th>Clean mAP50</th><th>Noisy mAP50 (σ=0.3)</th></tr>
+    <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>
+    <tr><td class="l">N1_MIXED (proposed)</td><td>0.4264</td><td>0.1961</td></tr>
+  </table>
+  </details>
 </div></section>
 
 <section><div class="wrap">

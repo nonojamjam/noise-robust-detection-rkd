@@ -13,20 +13,20 @@
 
 Lightweight detectors degrade sharply under satellite/aerial sensor noise. I distill the **relational (pairwise-distance) structure** of a frozen self-supervised foundation model (DINOv2 ViT-B/14) into a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training.
 
-On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this improves detection under noise and, in our experiments, also gains on the clean domain — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
+On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this recovers detection under noise at a cost on clean tiles — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
 
-> All reported numbers are single-seed (seed=0) runs; see [Limitations](#honest-limitations--next-directions).
+**Headline (controlled 10-epoch runs, seeds 0 and 1):**
 
-| Condition (50 epochs) | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
+| Condition | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
 |---|---|---|
-| BaseLine0 (plain transfer learning) | 0.2775 | 0.0090 |
-| **N1_MIXED (proposed)** | **0.4264** | **0.1961** |
+| BaseLine0 (clean-only training) | 0.2840 | 0.0149 |
+| **N1_MIXED (proposed: KD + mixed-noise)** | 0.2312 | **0.1821** |
 
-> ⚠️ **These two runs do not share hyperparameters** and should not be read as a controlled
-> comparison (checked 2026-09-08 by reading `train_args` off both checkpoints):
-> BaseLine0 was trained with `batch=2, imgsz=800, optimizer=AdamW`; N1_MIXED with
-> `batch=8, imgsz=640, optimizer=auto`. The 10-epoch ablation below **is** controlled —
-> all four conditions share hardware, hyperparameters and code.
+Noisy gain **+0.163** (seed-stable, ±0.0005) — **97% of it from mixed-noise training, +0.005 from distillation**. Clean cost **−0.053**. Recovery *ratios* are not reported: the same runs give ×11.9 on seed 0 and ×15.5 on seed 1 because the baseline's noisy score is a tiny denominator.
+
+> The earlier 50-epoch pair (0.0090 → 0.1961 noisy, 0.2775 → 0.4264 clean) is kept in
+> [results/README.md](results/README.md) for the record, but **those two runs do not share
+> hyperparameters** (`batch=2, imgsz=800, AdamW` vs. `batch=8, imgsz=640, auto`) and are not an effect size.
 
 Final deployed model: `YOLOv8s-seg`, **11.8M params / 22MB** — teacher + adapter fully removed at inference.
 
