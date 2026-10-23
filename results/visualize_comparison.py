@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 
 import cv2
+import matplotlib
+matplotlib.use("Agg")  # File output only; works on headless servers and CI.
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,8 +14,11 @@ from ultralytics import YOLO
 
 
 def load_student_model(checkpoint: str):
-    """Load a student state dictionary into the YOLOv8 segmentation model."""
-    ckpt = torch.load(checkpoint, map_location="cpu")
+    """Load either a legacy ``{'student': state_dict}`` or Ultralytics checkpoint."""
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    if not isinstance(ckpt, dict) or "student" not in ckpt:
+        print("[KD] standard Ultralytics checkpoint detected")
+        return YOLO(checkpoint)
     student_sd = ckpt["student"]
     model = YOLO("yolov8s-seg.pt")
     result = model.model.load_state_dict(student_sd, strict=False)
@@ -95,7 +100,10 @@ def make_summary_row(baseline, kd, image_path, out_dir, conf, imgsz, sigma=0.30)
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize baseline and KD predictions on one image.")
     parser.add_argument("--baseline", required=True, help="Baseline Ultralytics checkpoint.")
-    parser.add_argument("--proposed", required=True, help="KD checkpoint containing a student state dictionary.")
+    parser.add_argument(
+        "--proposed", required=True,
+        help="KD checkpoint: a standard Ultralytics .pt (including this trainer's best.pt), or legacy dict with 'student' key.",
+    )
     parser.add_argument("--images", required=True, help="Input image path.")
     parser.add_argument("--out-dir", default="results/qualitative")
     parser.add_argument("--conf", type=float, default=0.25)

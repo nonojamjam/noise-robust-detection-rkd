@@ -131,8 +131,11 @@ def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
 
     box50 = seg50 = -1.0
     try:
+        # Keep validation artifacts under the requested output directory instead
+        # of inheriting a possibly unavailable project path from the checkpoint.
         res = model.val(data=eval_yaml, imgsz=640, batch=8, verbose=False,
-                        device=device, plots=False, save=False)
+                        device=device, plots=False, save=False, project=out_dir,
+                        name="ultralytics_val", exist_ok=True)
         try:
             box50 = float(res.box.map50)
         except Exception:

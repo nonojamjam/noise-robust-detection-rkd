@@ -135,10 +135,16 @@
   <h2>Run it yourself</h2>
   <pre>git clone https://github.com/nonojamjam/noise-robust-detection-rkd
 cd noise-robust-detection-rkd
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-python src/n1mixed_kd_trainer.py --data /path/to/data.yaml</pre>
-  <p class="note">The DINOv2 teacher is fetched automatically via <code>torch.hub</code>. Trained on a Kaggle A100 (Ultralytics 8.4.62+, iSAID YOLO-seg format).</p>
+python src/n1mixed_kd_trainer.py --data /path/to/data.yaml --device 0</pre>
+  <p class="note">The DINOv2 teacher is fetched automatically via <code>torch.hub</code>. A CUDA GPU is strongly recommended; <code>--device cpu</code> works for smoke tests but is slow. Tested with Python 3.12, PyTorch 2.14.1, torchvision 0.29.1, and Ultralytics 8.4.184; other Python versions untested.</p>
+  <p class="note">Data: use Kaggle <code>redzapdos123/isaid-dataset-yolo11-seg-format</code> or a 16-class YOLO-seg iSAID layout. That Kaggle conversion's labels carry <code>cls cx cy w h</code> before polygon points (Known issue 4); remove the four box values before training, or boxes are inflated.</p>
+  <pre>python eval/noise_sweep.py --data_yaml /path/to/data.yaml --models n1mixed:runs/n1mixed/N1_MIXED/weights/best.pt --sigmas 0.0 0.3
+python results/visualize_comparison.py --baseline /path/to/baseline.pt --proposed runs/n1mixed/N1_MIXED/weights/best.pt --images /path/to/image.png</pre>
+  <p class="note">The comparison script accepts normal Ultralytics <code>best.pt</code> files and legacy checkpoint dictionaries containing a <code>student</code> key.</p>
 </div></section>
 
 <section><div class="wrap">

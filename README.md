@@ -118,9 +118,30 @@ configs/                    # hyperparameters
 ### Quick start
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
-python src/n1mixed_kd_trainer.py --data /path/to/data.yaml
+python src/n1mixed_kd_trainer.py --data /path/to/data.yaml --device 0
 ```
-The DINOv2 teacher is fetched automatically via `torch.hub`. Training was run on a Kaggle A100; see the reproducibility note below.
+The DINOv2 teacher is fetched automatically via `torch.hub` on first run. A CUDA GPU is strongly recommended; CPU is supported for smoke tests or small runs (`--device cpu`) but will be very slow. Use a batch size of at least 3: the distance-wise RKD loss normalizes by the mean pairwise distance, so with 2 samples it is identically zero (default batch is 8).
 
-> **Reproducibility note:** trained on Kaggle A100 (Ultralytics 8.4.62+, PyTorch, iSAID YOLO-seg format). Paths in `src/n1mixed_kd_trainer.py` (CONFIG block) are set for that environment; adjust them to run elsewhere. Key settings: 50 epochs, batch 8, imgsz 640, λ=0.5, mixed-noise ratio 0.5, eval σ=0.3.
+### Data preparation
+
+Use the Kaggle dataset [`redzapdos123/isaid-dataset-yolo11-seg-format`](https://www.kaggle.com/datasets/redzapdos123/isaid-dataset-yolo11-seg-format), or provide iSAID in standard YOLO-seg layout: a `data.yaml`, `images/{train,val}`, and matching `labels/{train,val}` polygon files. This repository expects 16 classes.
+
+The cited Kaggle conversion has the Known issue 4 label variant: every line begins with `cls cx cy w h` before the polygon points. Ultralytics YOLO-seg expects `cls x1 y1 x2 y2 ...`; using those prefixed files unchanged makes boxes appear inflated. Remove the four box values or use corrected labels before treating any metric as meaningful.
+
+### Evaluation and qualitative visualization
+
+```bash
+python eval/noise_sweep.py --data_yaml /path/to/data.yaml \
+  --models n1mixed:runs/n1mixed/N1_MIXED/weights/best.pt \
+  --sigmas 0.0 0.3 --max_images 50 --device 0
+
+python results/visualize_comparison.py --baseline /path/to/baseline.pt \
+  --proposed runs/n1mixed/N1_MIXED/weights/best.pt --images /path/to/image.png
+```
+
+`visualize_comparison.py` accepts both a normal Ultralytics checkpoint (including this trainer's `best.pt`) and the legacy checkpoint dictionary format containing a `student` key.
+
+> **Reproducibility note:** trained on Kaggle A100. The public quick-start path was tested with Python 3.12, PyTorch 2.14.1, torchvision 0.29.1, Ultralytics 8.4.184, NumPy 2.5.4, and PyYAML 6.0.3 (other Python versions untested; PyTorch had no wheel for Python 3.15 at test time). There is no environment-specific CONFIG path to edit: pass `--data`, `--project`, `--name`, and `--device` on the command line. Key settings remain 50 epochs, batch 8, imgsz 640, λ=0.5, mixed-noise ratio 0.5, eval σ=0.3.

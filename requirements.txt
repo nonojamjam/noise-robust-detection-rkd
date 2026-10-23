@@ -1,6 +1,6 @@
-torch>=2.0
-torchvision
-ultralytics>=8.4.62
-numpy
-pyyaml
+torch==2.14.1
+torchvision==0.29.1
+ultralytics==8.4.184
+numpy==2.5.4
+PyYAML==6.0.3
 # DINOv2 teacher is pulled via torch.hub: facebookresearch/dinov2 (dinov2_vitb14)
