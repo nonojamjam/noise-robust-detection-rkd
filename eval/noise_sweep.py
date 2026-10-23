@@ -16,11 +16,11 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 
-def apply_noise_np(arr: np.ndarray, sigma: float) -> np.ndarray:
+def apply_noise_np(arr: np.ndarray, sigma: float, rng: np.random.Generator) -> np.ndarray:
     """Add clipped Gaussian noise to a float32 HWC image in [0, 1]."""
     if sigma == 0.0:
         return arr
-    return (arr + sigma * np.random.randn(*arr.shape).astype(np.float32)).clip(0.0, 1.0)
+    return (arr + sigma * rng.standard_normal(arr.shape, dtype=np.float32)).clip(0.0, 1.0)
 
 
 def label_path_for(img_path: Path) -> Path:
@@ -28,19 +28,19 @@ def label_path_for(img_path: Path) -> Path:
     parts = list(img_path.parts)
     idxs = [i for i, x in enumerate(parts) if x == "images"]
     if not idxs:
-        raise ValueError(f"'images' 디렉토리 없는 경로: {img_path}")
+        raise ValueError(f"path has no 'images' directory: {img_path}")
     idx = idxs[-1]
     return Path(*parts[:idx], "labels", *parts[idx + 1:]).with_suffix(".txt")
 
 
 # Build a noisy validation cache below --out_dir.
-def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> str:
+def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int, seed: int) -> str:
     import yaml
 
     done = os.path.join(out_dir, ".done")
     cached_yaml = os.path.join(out_dir, "noisy_eval.yaml")
     if os.path.exists(done) and os.path.exists(cached_yaml):
-        print(f"    [cache] 재사용: {out_dir}")
+        print(f"    [cache] reuse: {out_dir}")
         return cached_yaml
 
     with open(yaml_path) as f:
@@ -59,8 +59,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
         imgs += val_dir.rglob(ext)
     imgs = sorted(imgs)
     if len(imgs) > max_n:
-        random.seed(42)
-        imgs = random.sample(imgs, max_n)
+        imgs = random.Random(seed).sample(imgs, max_n)
 
     out_img = Path(out_dir) / "images"
     out_lbl = Path(out_dir) / "labels"
@@ -68,6 +67,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
     out_lbl.mkdir(parents=True, exist_ok=True)
 
     ok = 0
+    noise_rng = np.random.default_rng(seed)
     for p in imgs:
         try:
             lbl = label_path_for(p)
@@ -80,16 +80,16 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
             continue
         if sigma > 0:
             arr = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            arr = apply_noise_np(arr, sigma)
+            arr = apply_noise_np(arr, sigma, noise_rng)
             bgr = cv2.cvtColor((arr * 255).round().astype(np.uint8), cv2.COLOR_RGB2BGR)
         # Avoid JPEG re-encoding changes to the injected noise.
         cv2.imwrite(str((out_img / p.stem).with_suffix(".png")), bgr)
         shutil.copy(str(lbl), str(out_lbl / (p.stem + ".txt")))
         ok += 1
 
-    print(f"    [noisy_val] σ={sigma:.2f}: {ok}장 생성")
+    print(f"    [noisy_val] σ={sigma:.2f}: {ok} images written")
     if ok == 0:
-        raise RuntimeError(f"노이즈 val 0장 — val 이미지/라벨 경로 확인: {val_dir}")
+        raise RuntimeError(f"0 noisy val images — check val image/label paths: {val_dir}")
 
     # Normalize names for Ultralytics.
     names = cfg.get("names")
@@ -110,7 +110,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
             "names": names,
         }, f)
     with open(done, "w") as f:
-        f.write(f"gaussian sigma={sigma}")
+        f.write(f"gaussian sigma={sigma}; seed={seed}")
     return cached_yaml
 
 
@@ -120,14 +120,14 @@ def load_p2_model(path: str):
         return YOLO(path)
     except Exception as e:
         raise RuntimeError(
-            f"모델 로드 실패: {path}\n"
+            f"failed to load model: {path}\n"
             f"Expected an iSAID-compatible Ultralytics checkpoint. Original error: {e}")
 
 
-def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
-    cache_key = f"s{sigma:.4f}_n{max_images}_png"
+def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device, seed, half):
+    cache_key = f"s{sigma:.4f}_n{max_images}_seed{seed}_png"
     cache_dir = os.path.join(out_dir, "noisy_val_cache", cache_key)
-    eval_yaml = make_noisy_val(yaml_path, cache_dir, sigma, max_images)
+    eval_yaml = make_noisy_val(yaml_path, cache_dir, sigma, max_images, seed)
 
     box50 = seg50 = -1.0
     try:
@@ -135,7 +135,7 @@ def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
         # of inheriting a possibly unavailable project path from the checkpoint.
         res = model.val(data=eval_yaml, imgsz=640, batch=8, verbose=False,
                         device=device, plots=False, save=False, project=out_dir,
-                        name="ultralytics_val", exist_ok=True)
+                        name="ultralytics_val", exist_ok=True, half=half)
         try:
             box50 = float(res.box.map50)
         except Exception:
@@ -145,7 +145,7 @@ def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
         except Exception:
             pass
     except Exception as e:
-        print(f"    [ERROR] val 실패: {e}")
+        print(f"    [ERROR] val failed: {e}")
     return box50, seg50
 
 
@@ -155,7 +155,7 @@ def plot_curve(results, sigmas, out_dir):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as e:
-        print(f"[plot] matplotlib 없음 — 표만 사용: {e}")
+        print(f"[plot] matplotlib unavailable — table only: {e}")
         return
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
@@ -176,28 +176,34 @@ def parse_args():
     p = argparse.ArgumentParser(description="iSAID noise sigma sweep (box and segmentation mAP)")
     p.add_argument("--data_yaml", required=True, help="iSAID yaml (nc=16)")
     p.add_argument("--models", nargs="+", required=True,
-                   help="label:best.pt 쌍들. 예) baseline:.../best.pt kd:.../best.pt")
+                   help="label:best.pt pairs, e.g. baseline:.../best.pt kd:.../best.pt")
     p.add_argument("--sigmas", type=float, nargs="+", default=[0.0, 0.1, 0.2, 0.3])
     p.add_argument("--max_images", type=int, default=300)
     p.add_argument("--out_dir", default="eval_out/isaid_sweep")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--seed", type=int, default=0, help="Base seed; each sigma uses seed + its index.")
+    p.add_argument("--half", action="store_true", help="Use FP16 validation when the selected device supports it.")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
-    print(f"[iSAID sweep] device={args.device} sigmas={args.sigmas} max={args.max_images}")
+    half = args.half
+    if half and str(args.device).lower() == "cpu":
+        print("[iSAID sweep] WARNING: --half is unsupported on CPU; disabling it.")
+        half = False
+    print(f"[iSAID sweep] device={args.device} sigmas={args.sigmas} max={args.max_images} seed={args.seed} half={half}")
 
     # Parse label:path model specifications.
     model_specs = []
     for item in args.models:
         if ":" not in item:
-            print(f"[SKIP] 'label:path' 형식 아님: {item}")
+            print(f"[SKIP] not in 'label:path' form: {item}")
             continue
         label, path = item.split(":", 1)
         if not os.path.exists(path):
-            print(f"[SKIP] {label}: {path} 없음")
+            print(f"[SKIP] {label}: {path} not found")
             continue
         model_specs.append((label, path))
 
@@ -210,17 +216,17 @@ def main():
         print(f"\n{'='*55}\n  {label.upper()}: {path}\n{'='*55}")
         model = load_p2_model(path)
         results[label] = {}
-        for sigma in args.sigmas:
+        for sigma_index, sigma in enumerate(args.sigmas):
             print(f"\n  σ = {sigma:.2f} ...")
             box50, seg50 = eval_box_seg(model, args.data_yaml, sigma,
-                                        args.out_dir, args.max_images, args.device)
+                                        args.out_dir, args.max_images, args.device, args.seed + sigma_index, half)
             results[label][str(sigma)] = {"box": round(box50, 6), "seg": round(seg50, 6)}
             print(f"  → Box {box50:.4f} | Seg {seg50:.4f}")
         del model
 
     # Print segmentation and box metrics.
     print("\n\n" + "━" * 64)
-    print("  Table. iSAID σ-sweep  (Seg mAP@50, 괄호=Box)")
+    print("  Table. iSAID σ-sweep  (Seg mAP@50, Box in parentheses)")
     print("━" * 64)
     header = f"  {'σ':<6}" + "".join(f"{lab:<20}" for lab, _ in model_specs)
     print(header); print("  " + "-" * 58)
@@ -233,7 +239,7 @@ def main():
         print(row)
     # Report the relative segmentation change from the first to final sigma.
     print("  " + "-" * 58)
-    print("  [clean 대비 Seg mAP 상대 변화]")
+    print("  [Seg mAP change relative to clean]")
     for lab, _ in model_specs:
         c = results[lab].get(str(args.sigmas[0]), {}).get("seg", -1)
         if c and c > 0:
@@ -245,7 +251,7 @@ def main():
 
     # Save machine-readable results and a curve.
     with open(os.path.join(args.out_dir, "results.json"), "w") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump({"seed": args.seed, "half": half, "results": results}, f, indent=2, ensure_ascii=False)
     with open(os.path.join(args.out_dir, "table.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["sigma"] + [f"{l}_box" for l, _ in model_specs]

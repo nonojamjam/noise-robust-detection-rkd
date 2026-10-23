@@ -26,11 +26,11 @@ def load_student_model(checkpoint: str):
     return model
 
 
-def add_noise(image: np.ndarray, sigma: float) -> np.ndarray:
+def add_noise(image: np.ndarray, sigma: float, rng: np.random.Generator) -> np.ndarray:
     if sigma == 0:
         return image.copy()
     noisy = image.astype(np.float32) / 255.0
-    noisy += np.random.randn(*noisy.shape).astype(np.float32) * sigma
+    noisy += rng.standard_normal(noisy.shape, dtype=np.float32) * sigma
     return (noisy.clip(0, 1) * 255).astype(np.uint8)
 
 
@@ -53,12 +53,12 @@ def run_detect(model: YOLO, image: np.ndarray, conf: float, imgsz: int) -> tuple
     return visual, count
 
 
-def make_2x2(baseline, kd, image_path, out_dir, conf, imgsz, sigma_noisy=0.30):
+def make_2x2(baseline, kd, image_path, out_dir, conf, imgsz, rng, sigma_noisy=0.30):
     original = cv2.imread(image_path)
     if original is None:
         raise FileNotFoundError(f"Image not found or unreadable: {image_path}")
     original = cv2.resize(original, (imgsz, imgsz))
-    clean, noisy = add_noise(original, 0.0), add_noise(original, sigma_noisy)
+    clean, noisy = add_noise(original, 0.0, rng), add_noise(original, sigma_noisy, rng)
     cells = [
         ("Baseline (clean)", baseline, clean), ("KD (clean)", kd, clean),
         (f"Baseline (sigma={sigma_noisy})", baseline, noisy), (f"KD (sigma={sigma_noisy})", kd, noisy),
@@ -77,12 +77,12 @@ def make_2x2(baseline, kd, image_path, out_dir, conf, imgsz, sigma_noisy=0.30):
     return output
 
 
-def make_summary_row(baseline, kd, image_path, out_dir, conf, imgsz, sigma=0.30):
+def make_summary_row(baseline, kd, image_path, out_dir, conf, imgsz, rng, sigma=0.30):
     original = cv2.imread(image_path)
     if original is None:
         raise FileNotFoundError(f"Image not found or unreadable: {image_path}")
     original = cv2.resize(original, (imgsz, imgsz))
-    clean, noisy = add_noise(original, 0.0), add_noise(original, sigma)
+    clean, noisy = add_noise(original, 0.0, rng), add_noise(original, sigma, rng)
     panels = [(kd, clean, "KD (clean)"), (baseline, noisy, "Baseline (noisy)"), (kd, noisy, "KD (noisy)")]
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     for axis, (model, image, title) in zip(axes, panels):
@@ -108,6 +108,7 @@ def parse_args():
     parser.add_argument("--out-dir", default="results/qualitative")
     parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--seed", type=int, default=0, help="Seed for deterministic Gaussian noise.")
     return parser.parse_args()
 
 
@@ -117,8 +118,9 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     baseline = YOLO(args.baseline)
     kd = load_student_model(args.proposed)
-    grid = make_2x2(baseline, kd, args.images, out_dir, args.conf, args.imgsz)
-    summary = make_summary_row(baseline, kd, args.images, out_dir, args.conf, args.imgsz)
+    rng = np.random.default_rng(args.seed)
+    grid = make_2x2(baseline, kd, args.images, out_dir, args.conf, args.imgsz, rng)
+    summary = make_summary_row(baseline, kd, args.images, out_dir, args.conf, args.imgsz, rng)
     print(f"Saved: {grid}\nSaved: {summary}")
 
 

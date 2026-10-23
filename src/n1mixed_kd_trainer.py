@@ -4,6 +4,7 @@ Training noise is sigma=50/255; sigma=0.3 is used for evaluation.
 """
 
 import argparse
+import csv
 import glob
 import os
 import shutil
@@ -98,17 +99,15 @@ def _ensure_nc16(yaml_path: str, project: str) -> str:
     return str(fixed)
 
 
-def _restore_stripped_checkpoint_epoch(weights: str) -> None:
-    """Recover the final epoch metadata that Ultralytics removes from ``last.pt``."""
+def _reject_completed_resume_checkpoint(weights: str) -> None:
+    """Reject final checkpoints, whose resume state Ultralytics has stripped."""
     path = Path(weights).expanduser()
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if checkpoint.get("epoch", -1) < 0 and checkpoint.get("optimizer") is None:
-        completed_epochs = int((checkpoint.get("train_args") or {}).get("epochs", 0))
-        if completed_epochs < 1:
-            raise RuntimeError(f"Cannot infer completed epoch from stripped checkpoint: {path}")
-        checkpoint["epoch"] = completed_epochs - 1
-        torch.save(checkpoint, path)
-        print(f"[N1Mixed] restored stripped checkpoint epoch={checkpoint['epoch']}")
+        raise RuntimeError(
+            f"{path} is a completed (stripped) checkpoint and cannot be resumed. "
+            "To train further, start a new run with --weights <ckpt> (without --resume)."
+        )
 
 
 def get_teacher(device="cuda"):
@@ -154,8 +153,34 @@ class N1MixedKDTrainer(SegmentationTrainer):
         super().__init__(cfg, overrides, _callbacks)
         self._teacher = self._adapter = self._s_feat = self._t_feat = self._orig_loss = None
         self._kd_calls = self._kd_applied = 0
+        self._epoch_rkd_sum = 0.0
+        self._epoch_rkd_applied = 0
         self._sppf_ch = 512
         self._sppf_hook = None
+        self.add_callback("on_train_epoch_start", self._reset_epoch_rkd)
+        self.add_callback("on_train_epoch_end", self._log_epoch_rkd)
+
+    @staticmethod
+    def _reset_epoch_rkd(trainer):
+        trainer._epoch_rkd_sum = 0.0
+        trainer._epoch_rkd_applied = 0
+
+    @staticmethod
+    def _log_epoch_rkd(trainer):
+        """Report RKD before lambda scaling without changing Ultralytics loss_items."""
+        if getattr(trainer, "rank", -1) not in {-1, 0}:
+            return
+        applied = trainer._epoch_rkd_applied
+        mean = trainer._epoch_rkd_sum / applied if applied else 0.0
+        epoch = trainer.epoch + 1
+        print(f"[N1Mixed] epoch={epoch} RKD mean (pre-lambda)={mean:.6f}; applied_batches={applied}")
+        log_path = Path(trainer.save_dir) / "rkd_log.csv"
+        write_header = not log_path.exists() or log_path.stat().st_size == 0
+        with log_path.open("a", newline="") as handle:
+            writer = csv.writer(handle)
+            if write_header:
+                writer.writerow(["epoch", "rkd_mean", "applied_batches"])
+            writer.writerow([epoch, f"{mean:.10f}", applied])
 
     def _layers(self):
         """Return the layer list whether or not the model is wrapped (DDP/EMA) — differs across Ultralytics versions."""
@@ -164,7 +189,7 @@ class N1MixedKDTrainer(SegmentationTrainer):
         return layers if isinstance(layers, (nn.Sequential, nn.ModuleList)) else layers.model
 
     def check_resume(self, overrides):
-        """Permit ``--epochs`` to extend a completed, optimizer-stripped last.pt."""
+        """Allow a resumed interrupted run to set its new total epoch count."""
         requested_epochs = overrides.get("epochs")
         super().check_resume(overrides)
         if self.resume and requested_epochs is not None:
@@ -198,12 +223,12 @@ class N1MixedKDTrainer(SegmentationTrainer):
             nn.Linear(self._sppf_ch, 256, bias=False), nn.LayerNorm(256), nn.ReLU(inplace=True), nn.Linear(256, 768, bias=False)
         ).to(self.device)
         sidecar = str(self.args.model).replace(".pt", "_kd_adapter.pt")
-        if self.args.resume and os.path.exists(sidecar):
+        if self.args.resume:
             try:
                 self._adapter.load_state_dict(torch.load(sidecar, map_location="cpu", weights_only=False), strict=True)
                 print(f"[N1Mixed] adapter loaded from {sidecar}")
             except Exception as error:
-                print(f"[N1Mixed] adapter sidecar could not be loaded; using random initialization: {error}")
+                raise RuntimeError(f"Resume requires KD adapter sidecar: {sidecar}. It could not be loaded: {error}") from error
         else:
             print("[N1Mixed] adapter: random initialization")
 
@@ -243,6 +268,8 @@ class N1MixedKDTrainer(SegmentationTrainer):
                 term = rkd_loss(self._adapter(self._s_feat), self._t_feat)
                 loss = loss + _runtime_settings["lambda_kd"] * term
                 self._kd_applied += 1
+                self._epoch_rkd_sum += float(term.detach())
+                self._epoch_rkd_applied += 1
                 if self._kd_applied == 1:
                     print(f"[N1Mixed] RKD loss applied (first batch): {float(term.detach()):.4f} x lambda {_runtime_settings['lambda_kd']}")
             return loss, loss_items
@@ -276,7 +303,10 @@ class N1MixedKDTrainer(SegmentationTrainer):
                         del module._forward_hooks[key]
         try:
             super().save_model()
-            for name in ("last.pt", "best.pt"):
+            names = ["last.pt", "best.pt"]
+            if self.save_period > 0 and self.epoch % self.save_period == 0:
+                names.append(f"epoch{self.epoch}.pt")
+            for name in names:
                 checkpoint = self.save_dir / "weights" / name
                 if checkpoint.exists() and self._adapter is not None:
                     torch.save(self._adapter.state_dict(), str(checkpoint).replace(".pt", "_kd_adapter.pt"))
@@ -290,6 +320,7 @@ class N1MixedKDTrainer(SegmentationTrainer):
 def run_n1mixed(**overrides):
     """Run training from a notebook or another Python caller."""
     settings = _load_config(overrides.pop("config", "configs/n1mixed.yaml"))
+    explicit_epochs = overrides.get("epochs") is not None
     settings.update({key: value for key, value in overrides.items() if value is not None})
     global _runtime_settings
     _runtime_settings = {key: settings[key] for key in DEFAULTS if key in settings}
@@ -304,13 +335,19 @@ def run_n1mixed(**overrides):
     if resume and not Path(weights).expanduser().exists():
         raise FileNotFoundError(f"Resume checkpoint not found: {weights}")
     if resume:
-        _restore_stripped_checkpoint_epoch(weights)
+        _reject_completed_resume_checkpoint(weights)
+        sidecar = str(weights).replace(".pt", "_kd_adapter.pt")
+        if not Path(sidecar).exists():
+            raise FileNotFoundError(f"Resume requires KD adapter sidecar; expected path: {sidecar}")
+    if _runtime_settings["lambda_kd"] > 0 and settings["batch"] < 3:
+        print("[N1Mixed] WARNING: batch < 3 makes distance-wise RKD identically zero after mean-distance normalization.")
     trainer_settings = {key: value for key, value in settings.items() if key not in {"lambda_kd", "mixed_noise_ratio", "train_noise_sigma"}}
+    if resume and not explicit_epochs:
+        trainer_settings.pop("epochs", None)  # keep the checkpoint's target epochs unless --epochs is given
     model = YOLO(weights)
     results = model.train(
-        # A checkpoint path bypasses Ultralytics' boolean-resume rejection after
-        # it strips optimizer state at the end of an epoch; the trainer restores
-        # the model, epoch, and adapter sidecar below.
+        # Keep the checkpoint path so Ultralytics restores the interrupted run's
+        # model/epoch state; completed stripped checkpoints are rejected above.
         data=data_yaml, project=project, name=name, exist_ok=True, resume=weights if resume else False,
         lrf=LREF, momentum=MOMENTUM, optimizer=OPTIMIZER, trainer=N1MixedKDTrainer,
         verbose=True, plots=False, **trainer_settings,

@@ -64,8 +64,8 @@
   <p class="kr">위성·항공 영상의 센서 노이즈 환경에서 경량 탐지기의 강건성을 이종 관계 지식증류로 확보</p>
   <p class="by">ML &amp; all code: <b>Juhyeok Park</b> · data/docs: Jiwon Lee · advisor: Prof. Hyeongwon Kim · Capstone, Chungbuk National University</p>
   <div class="stats">
-    <div class="stat"><div class="v"><span class="from">0.009</span> → <span class="to">0.196</span></div><div class="k">Noisy mAP50 (σ=0.3) · 50-ep, not hyperparameter-matched</div></div>
-    <div class="stat"><div class="v"><span class="from">0.278</span> → <span class="to">0.426</span></div><div class="k">Clean mAP50 · 50-ep, not hyperparameter-matched</div></div>
+    <div class="stat"><div class="v"><span class="from">0.009</span> → <span class="to">0.196</span></div><div class="k">Noisy box mAP50 (σ=0.3) · 50-ep, not hyperparameter-matched</div></div>
+    <div class="stat"><div class="v"><span class="from">0.278</span> → <span class="to">0.426</span></div><div class="k">Clean box mAP50 · 50-ep, not hyperparameter-matched</div></div>
     <div class="stat"><div class="v">11.8M <span class="from">/ 22MB</span></div><div class="k">Deployed model size</div></div>
     <div class="stat"><div class="v">+0<span class="from"> cost</span></div><div class="k">Added inference cost</div></div>
   </div>
@@ -85,7 +85,7 @@
       <span class="ba-tag r">Proposed · detects ✓<span class="dot g" style="margin-left:6px"></span></span>
     </div>
     <input type="range" id="wipe" min="0" max="100" value="55" aria-label="compare baseline and proposed">
-    <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b>. Qualitative tile from iSAID validation. June 2026 results, preliminary — see Known issues below.</p>
+  <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>box mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b>. Qualitative tile from iSAID validation. June 2026 results, preliminary — see Known issues below.</p>
   </div>
 </div></section>
 
@@ -96,7 +96,8 @@
   <p class="note">Training pipeline. <b>Total loss = YOLO(det+seg) + λ·RKD</b> (λ=0.5). At inference the teacher and adapter are removed → plain YOLOv8s-seg, zero overhead.</p>
   <ul>
     <li><b>Heterogeneous</b> ViT→CNN transfer (most KD assumes the same architecture family).</li>
-    <li><b>50:50 mixed-noise training</b> — the teacher always sees clean input; the student sees half-noisy batches.</li>
+    <li><b>50:50 mixed-noise training</b> — the teacher sees noise-free (augmented) input; the student sees half-noisy batches. Training σ=50/255 and evaluation σ=0.3 deliberately test robustness beyond the training noise.</li>
+    <li><b>Teacher input and LR</b> — [0,1] images are resized to 448 without ImageNet mean/std normalization; the adapter uses <code>lr0</code> (default 5e-5), while the model uses the <code>optimizer=auto</code> LR, as in the June original.</li>
     <li><b>Detached at inference</b> — the deployed model is unchanged in size and speed.</li>
   </ul>
 </div></section>
@@ -105,13 +106,13 @@
   <h2>Results</h2>
   <h3>50-epoch comparison (not hyperparameter-matched)</h3>
   <table>
-    <tr><th class="l">Condition</th><th>Clean mAP50</th><th>Noisy mAP50 (σ=0.3)</th></tr>
+    <tr><th class="l">Condition</th><th>Clean box mAP50</th><th>Noisy box mAP50 (σ=0.3)</th></tr>
     <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>
     <tr><td class="l">N1_MIXED (proposed)</td><td class="hi">0.4264</td><td class="hi">0.1961</td></tr>
   </table>
   <h3 style="margin-top:26px">10-epoch ablation — isolating KD vs. noise</h3>
   <table>
-    <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean</th><th>Noisy</th><th>KD Δ (Clean)</th></tr>
+    <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean box mAP50</th><th>Noisy box mAP50</th><th>KD Δ (Clean)</th></tr>
     <tr><td class="l">BaseLine0 ⚠️</td><td>✗</td><td>✗</td><td><s>0.1243</s></td><td><s>0.0152</s></td><td>invalid (2 epochs)</td></tr>
     <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2849</td><td>0.0390</td><td>—</td></tr>
     <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.1386</td><td>0.1728</td><td>—</td></tr>
@@ -149,7 +150,7 @@ python results/visualize_comparison.py --baseline /path/to/baseline.pt --propose
 
 <section><div class="wrap">
   <h2>My contribution &amp; honest limits</h2>
-  <p><b>All ML and code</b> by Juhyeok Park: the distance-wise RKD loss, a custom Ultralytics trainer (SPPF hook + MLP adapter + mixed-noise injection), and three framework-level fixes that unblocked training (<code>model.loss</code> wrapping, optimizer param-group mismatch on resume, adapter-sidecar save/load), plus the ablation and evaluation design.</p>
+  <p><b>All ML and code</b> by Juhyeok Park: the distance-wise RKD loss, a custom Ultralytics trainer (SPPF hook + MLP adapter + mixed-noise injection), and three integration issues with the Ultralytics training loop that were resolved (<code>model.loss</code> wrapping, optimizer param-group mismatch on resume, adapter-sidecar save/load), plus the ablation and evaluation design.</p>
   <p class="note"><b>Limits (kept honest):</b> single seed, Gaussian noise + iSAID only, λ fixed at 0.5. <b>Next:</b> multi-seed + λ sweep, cross-dataset (DOTA/xView) &amp; compound degradation, and federated-learning integration for data that can't leave the node (a SCAFFOLD/FedAvg prototype exists; exploratory, not in the benchmark above).</p>
   <a class="btn" href="https://github.com/nonojamjam/noise-robust-detection-rkd">View the code on GitHub →</a>
 </div></section>
