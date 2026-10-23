@@ -13,20 +13,14 @@
 
 Lightweight detectors degrade sharply under satellite/aerial sensor noise. I distill the **relational (pairwise-distance) structure** of a frozen self-supervised foundation model (DINOv2 ViT-B/14) into a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training.
 
-On iSAID (16 classes), under strong Gaussian noise (σ=0.3), this recovers detection under noise at a cost on clean tiles — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
+On iSAID (16 classes), under strong Gaussian noise (σ=0.3), the proposed training kept detecting where the baseline failed in our June experiments — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
 
-**Headline (controlled 10-epoch runs, seeds 0 and 1):**
+> All reported numbers are single-seed (seed=0) runs from the June 2026 presentation and are **preliminary** — see [Known issues](#known-issues-found-after-the-june-presentation).
 
-| Condition | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
+| Condition (50 epochs; **not hyperparameter-matched**, see Known issues 2) | mAP50 (Clean) | mAP50 (Noisy, σ=0.3) |
 |---|---|---|
-| BaseLine0 (clean-only training) | 0.2840 | 0.0149 |
-| **N1_MIXED (proposed: KD + mixed-noise)** | 0.2312 | **0.1821** |
-
-Noisy gain **+0.163** (seed-stable, ±0.0005) — **97% of it from mixed-noise training, +0.005 from distillation**. Clean cost **−0.053**. Recovery *ratios* are not reported: the same runs give ×11.9 on seed 0 and ×15.5 on seed 1 because the baseline's noisy score is a tiny denominator.
-
-> The earlier 50-epoch pair (0.0090 → 0.1961 noisy, 0.2775 → 0.4264 clean) is kept in
-> [results/README.md](results/README.md) for the record, but **those two runs do not share
-> hyperparameters** (`batch=2, imgsz=800, AdamW` vs. `batch=8, imgsz=640, auto`) and are not an effect size.
+| BaseLine0 (plain transfer learning) | 0.2775 | 0.0090 |
+| **N1_MIXED (proposed)** | **0.4264** | **0.1961** |
 
 Final deployed model: `YOLOv8s-seg`, **11.8M params / 22MB** — teacher + adapter fully removed at inference.
 
@@ -68,20 +62,25 @@ At inference: teacher + adapter removed → plain YOLOv8s-seg.
 
 | Condition | KD | Noise | Clean mAP50 | Noisy mAP50 | KD Δ (Clean) |
 |---|---|---|---|---|---|
-| BaseLine0 | ✗ | ✗ | 0.2840 | 0.0149 | — |
-| C1 | ✅ | ✗ | 0.2974 | 0.0179 | **+0.0134** |
-| A_NOISY | ✗ | ✅ | 0.2252 | 0.1776 | — |
-| **N1_MIXED** | ✅ | ✅ | 0.2312 | 0.1821 | +0.0060 (vs. noise-only) |
+| BaseLine0 ⚠️ | ✗ | ✗ | ~~0.1243~~ | ~~0.0152~~ | — (trained 2 epochs, not 10 — invalid; Known issues 1) |
+| C1 | ✅ | ✗ | 0.2849 | 0.0390 | — |
+| A_NOISY | ✗ | ✅ | 0.1386 | 0.1728 | — |
+| **N1_MIXED** | ✅ | ✅ | 0.2277 | 0.1799 | +0.0897 (vs. noise-only) |
 
-- **KD alone** (C1 vs. BaseLine0): **+0.0134** Clean mAP50 — heterogeneous ViT→CNN transfer helps, but modestly.
-- **Mixed-noise training is the dominant factor** under noise: +0.163 (A_NOISY vs. BaseLine0), versus +0.005 from KD on top of it.
-- The two are **additive under noise** (interaction ≈ +0.0015) but mixed-noise training **costs clean accuracy**: −0.060 ± 0.002 across two seeds.
-- **At 10 epochs the two are not free of each other**: mixed-noise training trades ~0.06 clean mAP50
-  for +0.163 under noise (−0.060 ± 0.002 across two seeds).
-  Whether this is fundamental or an artifact of undertraining is **open** — all three conditions
-  were still improving monotonically at epoch 10, and none had converged.
+- Comparisons against the BaseLine0 row are withdrawn (Known issues 1); the remaining rows are as presented and share the data issues listed below.
 
 **Qualitative (P1130 aircraft tile, σ=0.05):** BaseLine0 detects **0** objects (total failure); N1_MIXED detects **2** aircraft correctly.
+
+## Known issues (found after the June presentation)
+
+The numbers above are the June 2026 capstone presentation results, kept as presented except for the two corrections marked below. Later audits found problems that affect **all** of them; they should be read as preliminary.
+
+1. **10-epoch baseline was not 10 epochs.** The BaseLine0 checkpoint behind the ablation row was trained for 2 epochs (`train_args.epochs=2`, batch 16). Comparisons against that row — including "KD alone +0.1606" — are invalid and have been removed.
+2. **The 50-epoch pair is not hyperparameter-matched** (BaseLine0: batch 2, imgsz 800, AdamW; N1_MIXED: batch 8, imgsz 640, auto). It is not an effect size.
+3. **Train/validation overlap in the dataset version used.** In the public Kaggle conversion we used, most validation tiles are byte-identical copies of training tiles, so validation mAP was largely measured on images seen during training.
+4. **Label-format issue.** Each label line carries a `cx cy w h` box prefix before the polygon; the loader read it as extra polygon vertices, inflating ground-truth boxes.
+
+All conditions are being re-run on the official iSAID train/val split with the label fix.
 
 ## Contributions
 
@@ -120,9 +119,7 @@ configs/                    # hyperparameters
 
 ```bash
 pip install -r requirements.txt
-# Edit the CONFIG block at the top of src/n1mixed_kd_trainer.py
-# (checkpoint path, dataset yaml) for your environment, then:
-python -c "from src.n1mixed_kd_trainer import run_n1mixed; run_n1mixed()"
+python src/n1mixed_kd_trainer.py --data /path/to/data.yaml
 ```
 The DINOv2 teacher is fetched automatically via `torch.hub`. Training was run on a Kaggle A100; see the reproducibility note below.
 

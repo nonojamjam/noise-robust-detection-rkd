@@ -1,178 +1,118 @@
-"""
-졸업발표용 정성 시각화 — COCO 이미지 기반 Baseline vs KD × Clean vs Noisy
+"""Create clean/noisy qualitative comparisons for baseline and KD models."""
 
-목적:
-  - COCO 실험 결과 (+3.6% clean, -2.7% noisy)를 정성적으로 뒷받침
-  - 슬라이드용 2×2 그리드: [clean|noisy] × [baseline|KD]
-  - 두 모델 모두 COCO 학습 → COCO 이미지에서 실제 검출 가능
-
-사용:
-  python visualize_kd_noise_comparison.py
-  → figures/qualitative/kd_noise_2x2.png  (슬라이드용)
-  → figures/qualitative/kd_noise_summary.png (1행 요약)
-"""
+import argparse
+from pathlib import Path
 
 import cv2
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
-from pathlib import Path
 from ultralytics import YOLO
-from ultralytics.utils import ASSETS
 
-OUT_DIR  = Path("figures/qualitative")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-CONF     = 0.25
-IMG_SIZE = 640
-
-# ── 모델 로드 ──────────────────────────────────────────────────────────────────
-def load_student_model():
-    """v9_best.pt에서 student 백본 추출 → yolov8s-seg 구조에 주입."""
-    ckpt = torch.load("weights/v9_best.pt", map_location="cpu")
+def load_student_model(checkpoint: str):
+    """Load a student state dictionary into the YOLOv8 segmentation model."""
+    ckpt = torch.load(checkpoint, map_location="cpu")
     student_sd = ckpt["student"]
     model = YOLO("yolov8s-seg.pt")
     result = model.model.load_state_dict(student_sd, strict=False)
-    print(f"  [KD] missing={len(result.missing_keys)}, unexpected={len(result.unexpected_keys)}")
+    print(f"[KD] missing={len(result.missing_keys)}, unexpected={len(result.unexpected_keys)}")
     return model
 
 
-def add_noise(img_bgr: np.ndarray, sigma: float) -> np.ndarray:
+def add_noise(image: np.ndarray, sigma: float) -> np.ndarray:
     if sigma == 0:
-        return img_bgr.copy()
-    noisy = img_bgr.astype(np.float32) / 255.0
+        return image.copy()
+    noisy = image.astype(np.float32) / 255.0
     noisy += np.random.randn(*noisy.shape).astype(np.float32) * sigma
     return (noisy.clip(0, 1) * 255).astype(np.uint8)
 
 
-def run_detect(model: YOLO, img_bgr: np.ndarray) -> tuple[np.ndarray, int]:
-    """검출 실행 → (박스 그린 BGR, 검출수)"""
-    vis = img_bgr.copy()
-    res = model(img_bgr, imgsz=IMG_SIZE, conf=CONF, verbose=False)[0]
-    boxes = res.boxes
-    n = 0
-    if boxes is not None and len(boxes):
-        for box in boxes:
-            conf = float(box.conf[0])
-            if conf < CONF:
+def run_detect(model: YOLO, image: np.ndarray, conf: float, imgsz: int) -> tuple[np.ndarray, int]:
+    """Run detection and return the annotated image and detection count."""
+    visual = image.copy()
+    result = model(image, imgsz=imgsz, conf=conf, verbose=False)[0]
+    count = 0
+    if result.boxes is not None and len(result.boxes):
+        for box in result.boxes:
+            score = float(box.conf[0])
+            if score < conf:
                 continue
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-            cls_id = int(box.cls[0])
-            label = f"{res.names[cls_id]} {conf:.2f}" if cls_id in res.names else f"cls{cls_id}"
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (30, 200, 50), 2)
-            cv2.putText(vis, label, (x1, max(y1 - 6, 12)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (30, 200, 50), 1)
-            n += 1
-    return vis, n
+            class_id = int(box.cls[0])
+            label = f"{result.names[class_id]} {score:.2f}" if class_id in result.names else f"class {class_id}"
+            cv2.rectangle(visual, (x1, y1), (x2, y2), (30, 200, 50), 2)
+            cv2.putText(visual, label, (x1, max(y1 - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (30, 200, 50), 1)
+            count += 1
+    return visual, count
 
 
-# ── 2×2 메인 그리드 ───────────────────────────────────────────────────────────
-def make_2x2(baseline: YOLO, kd: YOLO, img_path: str, sigma_noisy: float = 0.30):
-    orig = cv2.imread(img_path)
-    orig = cv2.resize(orig, (IMG_SIZE, IMG_SIZE))
-
-    clean = add_noise(orig, 0.0)
-    noisy = add_noise(orig, sigma_noisy)
-
+def make_2x2(baseline, kd, image_path, out_dir, conf, imgsz, sigma_noisy=0.30):
+    original = cv2.imread(image_path)
+    if original is None:
+        raise FileNotFoundError(f"Image not found or unreadable: {image_path}")
+    original = cv2.resize(original, (imgsz, imgsz))
+    clean, noisy = add_noise(original, 0.0), add_noise(original, sigma_noisy)
     cells = [
-        ("Baseline  (σ=0, clean)",   baseline, clean),
-        ("KD Ours  (σ=0, clean)",    kd,       clean),
-        (f"Baseline  (σ={sigma_noisy}, noisy)", baseline, noisy),
-        (f"KD Ours  (σ={sigma_noisy}, noisy)",  kd,       noisy),
+        ("Baseline (clean)", baseline, clean), ("KD (clean)", kd, clean),
+        (f"Baseline (sigma={sigma_noisy})", baseline, noisy), (f"KD (sigma={sigma_noisy})", kd, noisy),
     ]
-
     fig, axes = plt.subplots(2, 2, figsize=(13, 11))
-    fig.suptitle(
-        "Baseline vs KD — Clean / Noisy 검출 비교  (COCO val)",
-        fontsize=14, fontweight="bold", y=0.99
-    )
-
-    positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
-    for (title, model, img), (r, c) in zip(cells, positions):
-        vis_bgr, n = run_detect(model, img)
-        rgb = cv2.cvtColor(vis_bgr, cv2.COLOR_BGR2RGB)
-
-        ax = axes[r][c]
-        ax.imshow(rgb)
-
-        det_str = f"검출 {n}개" if n > 0 else "검출 없음"
-        color   = "#1a7f37" if n > 0 else "#cf222e"
-        ax.set_title(f"{title}\n{det_str}", fontsize=11,
-                     color=color, fontweight="bold", pad=6)
-        ax.axis("off")
-
-        # 노이즈 행에 테두리 강조
-        if r == 1:
-            for spine in ax.spines.values():
-                spine.set_edgecolor("#cf222e")
-                spine.set_linewidth(2.5)
-                spine.set_visible(True)
-
-    # 범례
-    legend = [
-        mpatches.Patch(color="#1a7f37", label="검출 있음"),
-        mpatches.Patch(color="#cf222e", label="검출 없음 / 저하"),
-    ]
-    fig.legend(handles=legend, loc="lower center", ncol=2,
-               fontsize=11, framealpha=0.9, bbox_to_anchor=(0.5, 0.01))
-
-    plt.tight_layout(rect=[0, 0.04, 1, 0.99])
-    out = OUT_DIR / "kd_noise_2x2.png"
-    fig.savefig(out, dpi=180, bbox_inches="tight")
-    plt.close()
-    print(f"\n★ 2×2 저장: {out}")
-    return out
+    for (title, model, image), axis in zip(cells, axes.flat):
+        visual, count = run_detect(model, image, conf, imgsz)
+        axis.imshow(cv2.cvtColor(visual, cv2.COLOR_BGR2RGB))
+        axis.set_title(f"{title}\n{count} detections", color="#1a7f37" if count else "#cf222e", fontweight="bold")
+        axis.axis("off")
+    fig.legend(handles=[mpatches.Patch(color="#1a7f37", label="detections"), mpatches.Patch(color="#cf222e", label="no detections")], loc="lower center", ncol=2)
+    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    output = out_dir / "kd_noise_2x2.png"
+    fig.savefig(output, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return output
 
 
-# ── 슬라이드용 1행 요약 (clean KD vs noisy baseline) ─────────────────────────
-def make_summary_row(baseline: YOLO, kd: YOLO, img_path: str, sigma: float = 0.30):
-    orig  = cv2.imread(img_path)
-    orig  = cv2.resize(orig, (IMG_SIZE, IMG_SIZE))
-    clean = add_noise(orig, 0.0)
-    noisy = add_noise(orig, sigma)
-
-    vis_kd_clean, n_kd  = run_detect(kd,       clean)
-    vis_bl_noisy, n_bl  = run_detect(baseline,  noisy)
-    vis_kd_noisy, n_kd2 = run_detect(kd,        noisy)
-
+def make_summary_row(baseline, kd, image_path, out_dir, conf, imgsz, sigma=0.30):
+    original = cv2.imread(image_path)
+    if original is None:
+        raise FileNotFoundError(f"Image not found or unreadable: {image_path}")
+    original = cv2.resize(original, (imgsz, imgsz))
+    clean, noisy = add_noise(original, 0.0), add_noise(original, sigma)
+    panels = [(kd, clean, "KD (clean)"), (baseline, noisy, "Baseline (noisy)"), (kd, noisy, "KD (noisy)")]
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    fig.suptitle(f"Gram-KD: clean에서 우위, noisy(σ={sigma})에서 취약 — COCO 정성 확인",
-                 fontsize=13, fontweight="bold")
+    for axis, (model, image, title) in zip(axes, panels):
+        visual, count = run_detect(model, image, conf, imgsz)
+        axis.imshow(cv2.cvtColor(visual, cv2.COLOR_BGR2RGB))
+        axis.set_title(f"{title}\n{count} detections", fontweight="bold")
+        axis.axis("off")
+    fig.tight_layout()
+    output = out_dir / "kd_noise_summary.png"
+    fig.savefig(output, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return output
 
-    panels = [
-        (vis_kd_clean,  f"KD (clean σ=0)\n검출 {n_kd}개",   "#1a7f37"),
-        (vis_bl_noisy,  f"Baseline (noisy σ={sigma})\n검출 {n_bl}개", "#e36209"),
-        (vis_kd_noisy,  f"KD (noisy σ={sigma})\n검출 {n_kd2}개",  "#cf222e" if n_kd2 <= n_kd else "#1a7f37"),
-    ]
-    for ax, (bgr, title, color) in zip(axes, panels):
-        ax.imshow(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-        ax.set_title(title, fontsize=12, color=color, fontweight="bold", pad=8)
-        ax.axis("off")
 
-    plt.tight_layout()
-    out = OUT_DIR / "kd_noise_summary.png"
-    fig.savefig(out, dpi=200, bbox_inches="tight")
-    plt.close()
-    print(f"★ 요약 1행 저장: {out}")
-    return out
+def parse_args():
+    parser = argparse.ArgumentParser(description="Visualize baseline and KD predictions on one image.")
+    parser.add_argument("--baseline", required=True, help="Baseline Ultralytics checkpoint.")
+    parser.add_argument("--proposed", required=True, help="KD checkpoint containing a student state dictionary.")
+    parser.add_argument("--images", required=True, help="Input image path.")
+    parser.add_argument("--out-dir", default="results/qualitative")
+    parser.add_argument("--conf", type=float, default=0.25)
+    parser.add_argument("--imgsz", type=int, default=640)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    baseline = YOLO(args.baseline)
+    kd = load_student_model(args.proposed)
+    grid = make_2x2(baseline, kd, args.images, out_dir, args.conf, args.imgsz)
+    summary = make_summary_row(baseline, kd, args.images, out_dir, args.conf, args.imgsz)
+    print(f"Saved: {grid}\nSaved: {summary}")
 
 
 if __name__ == "__main__":
-    print("=== Baseline vs KD 정성 시각화 ===")
-
-    img_path = str(ASSETS / "bus.jpg")   # ultralytics 내장 COCO 버스 이미지
-    print(f"이미지: {img_path}")
-
-    print("\n[1/2] 모델 로드...")
-    baseline = YOLO("weights/yolov8s-seg.pt")
-    print("  [Baseline] yolov8s-seg.pt 로드 완료")
-    kd = load_student_model()
-
-    print("\n[2/2] 시각화 생성...")
-    make_2x2(baseline, kd, img_path, sigma_noisy=0.30)
-    make_summary_row(baseline, kd, img_path, sigma=0.30)
-
-    print("\n완료! figures/qualitative/ 확인하세요.")
-    print("  - kd_noise_2x2.png    (슬라이드 메인)")
-    print("  - kd_noise_summary.png (1행 요약)")
+    main()

@@ -1,316 +1,284 @@
-"""
-kd_v7_5_n1mixed_fulltime.py — N1_MIXED 50ep FULLTIME (Kaggle A100)
+"""Train N1_MIXED segmentation with relational knowledge distillation.
 
-사용법 (Kaggle Notebook Cell):
-    exec(open('/kaggle/working/kd_v7_5_n1mixed_fulltime.py').read())
-    run_n1mixed()
-
-핵심 설계:
-  - N1_MIXED: 50% 배치에 Gaussian 노이즈 (σ=0.3) / Teacher는 항상 clean 입력
-  - resume: optimizer state 자동 strip → param group 불일치 방지
-  - adapter 가중치: last.pt 옆에 last_kd_adapter.pt 사이드카로 별도 저장/로드
-  - Ultralytics 8.4.62+ API 변경 (_setup_train world_size 인자 제거) 대응
+Training noise is sigma=50/255; sigma=0.3 is used for evaluation.
 """
 
-import os, gc, glob, shutil, yaml, random
+import argparse
+import glob
+import os
+import shutil
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import yaml
 from ultralytics import YOLO
 from ultralytics.models.yolo.segment import SegmentationTrainer
 
-# ══════════════════════════════════════════════
-# 상수 — 필요 시 수정
-# ══════════════════════════════════════════════
-LAST_PT       = '/content/drive/MyDrive/fedv9_v3/checkpoints/N1_MIXED_50ep/last.pt'
-PROJECT       = '/content/hy_N1_MIXED'
-RUN_NAME      = 'N1_MIXED_50ep'
-FULL_EPOCHS   = 50
-BATCH         = 8
-LR0           = 5e-5          # resume 시 낮은 lr 권장
-IMGSZ         = 640
-NOISE_SIGMA   = 50 / 255  # ≈ 0.196 (학습용, 평가 σ=0.3보다 약한 조건)
-MIXED_RATIO   = 0.5           # 배치 내 noisy 이미지 비율
-DINOV2_SIZE   = 448           # 14의 배수 (14×32)
-LAM_KD        = 0.5           # RKD loss weight
-
-# ══════════════════════════════════════════════
-# data.yaml 자동 탐색
-# ══════════════════════════════════════════════
-def _find_data_yaml() -> str:
-    candidates = [
-        '/tmp/isaid_fixed.yaml',
-        '/kaggle/input/isaid-dataset-yolo11-seg-format/iSAIDYolo11Seg/data.yaml',
-    ]
-    # kagglehub 캐시
-    for root in glob.glob('/root/.cache/kagglehub/datasets/redzapdos123/**', recursive=False):
-        candidates += glob.glob(f'{root}/**/data.yaml', recursive=True)
-
-    for c in candidates:
-        if os.path.exists(c):
-            # nc 확인 후 isaid_fixed.yaml로 복사 (nc=16 보장)
-            return _ensure_nc16(c)
-    raise FileNotFoundError('data.yaml을 찾을 수 없습니다. Kaggle 데이터셋을 추가하세요.')
-
-
-def _ensure_nc16(yaml_path: str) -> str:
-    """nc=16이 아닌 경우 /tmp/isaid_fixed.yaml로 복사해 수정"""
-    with open(yaml_path) as f:
-        cfg = yaml.safe_load(f)
-    if cfg.get('nc') == 16 and yaml_path == '/tmp/isaid_fixed.yaml':
-        return yaml_path
-    # 경로 검증
-    base = Path(yaml_path).parent
-    cfg['nc'] = 16
-    if cfg.get('path') and not Path(cfg['path']).exists():
-        cfg['path'] = str(base)
-    fixed = '/tmp/isaid_fixed.yaml'
-    with open(fixed, 'w') as f:
-        yaml.dump(cfg, f)
-    print(f'[DataYAML] {yaml_path} → {fixed} (nc=16)')
-    return fixed
-
-
-# ══════════════════════════════════════════════
-# Teacher (DINOv2 ViT-B/14)
-# ══════════════════════════════════════════════
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULTS = {
+    "epochs": 50,
+    "batch": 8,
+    "imgsz": 640,
+    # Historical low learning rate for resumed runs; retain the original value.
+    "lr0": 5e-5,
+    "lambda_kd": 0.5,
+    "mixed_noise_ratio": 0.5,
+    "train_noise_sigma": 50 / 255,
+}
+DINOV2_SIZE = 448
+LREF = 0.1
+MOMENTUM = 0.937
+OPTIMIZER = "auto"
 _teacher_cache = None
+_runtime_settings = DEFAULTS.copy()
+
+
+def _repository_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def _load_config(config_path: str | None) -> dict:
+    settings = DEFAULTS.copy()
+    if not config_path:
+        return settings
+    path = _repository_path(config_path)
+    if not path.exists():
+        return settings
+    with path.open() as handle:
+        config = yaml.safe_load(handle) or {}
+    for key in DEFAULTS:
+        if key in config:
+            settings[key] = config[key]
+    return settings
+
+
+def _find_data_yaml() -> str:
+    """Find a data YAML from ISAID_DATA or Kaggle candidates."""
+    candidates = []
+    if os.environ.get("ISAID_DATA"):
+        candidates.append(Path(os.environ["ISAID_DATA"]).expanduser())
+    kaggle_input = Path(os.environ.get("KAGGLE_INPUT_ROOT", "/kaggle/input"))
+    if kaggle_input.exists():
+        candidates.extend(kaggle_input.glob("**/data.yaml"))
+    kagglehub = Path.home() / ".cache" / "kagglehub" / "datasets"
+    if kagglehub.exists():
+        candidates.extend(Path(path) for path in glob.glob(str(kagglehub / "**/data.yaml"), recursive=True))
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise FileNotFoundError("data.yaml was not found. Pass --data, set ISAID_DATA, or provide a Kaggle dataset.")
+
+
+def _ensure_nc16(yaml_path: str, project: str) -> str:
+    """Write an nc=16 correction below the selected project directory."""
+    source = Path(yaml_path).expanduser().resolve()
+    with source.open() as handle:
+        data = yaml.safe_load(handle) or {}
+    if data.get("nc") == 16:
+        return str(source)
+    data["nc"] = 16
+    if data.get("path") and not Path(data["path"]).expanduser().exists():
+        data["path"] = str(source.parent)
+    fixed = Path(project).expanduser() / "data_nc16.yaml"
+    fixed.parent.mkdir(parents=True, exist_ok=True)
+    with fixed.open("w") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False)
+    print(f"[DataYAML] {source} -> {fixed} (nc=16)")
+    return str(fixed)
+
 
 def get_teacher():
+    """Load and cache the frozen DINOv2 ViT-B/14 teacher."""
     global _teacher_cache
     if _teacher_cache is None:
-        print('[Teacher] DINOv2 ViT-B/14 로드 중...')
-        _teacher_cache = torch.hub.load(
-            'facebookresearch/dinov2', 'dinov2_vitb14', pretrained=True)
+        print("[Teacher] Loading DINOv2 ViT-B/14...")
+        _teacher_cache = torch.hub.load("facebookresearch/dinov2", "dinov2_vitb14", pretrained=True)
         _teacher_cache.eval().cuda()
-        for p in _teacher_cache.parameters():
-            p.requires_grad_(False)
-        print('[Teacher] 완료')
+        for parameter in _teacher_cache.parameters():
+            parameter.requires_grad_(False)
     return _teacher_cache
 
 
-def extract_teacher_cls(teacher, imgs_clean, block=11):
-    """clean 이미지 → DINOv2 block11 CLS token (B, 768)"""
-    feat = {}
+def extract_teacher_cls(teacher, clean_images, block=11):
+    """Extract one DINOv2 CLS token per clean image."""
+    features = {}
     hook = teacher.blocks[block].register_forward_hook(
-        lambda m, i, o: feat.update({block: o[:, 0].detach()}))
+        lambda _module, _inputs, output: features.update({block: output[:, 0].detach()})
+    )
     with torch.no_grad():
-        resized = F.interpolate(imgs_clean, size=(DINOV2_SIZE, DINOV2_SIZE),
-                                mode='bilinear', align_corners=False)
+        resized = F.interpolate(clean_images, size=(DINOV2_SIZE, DINOV2_SIZE), mode="bilinear", align_corners=False)
         teacher(resized)
     hook.remove()
-    return feat[block]   # (B, 768)
+    return features[block]
 
 
-# ══════════════════════════════════════════════
-# RKD Loss
-# ══════════════════════════════════════════════
-def rkd_loss(s, t):
-    s = F.normalize(s, dim=-1)
-    t = F.normalize(t, dim=-1)
-    sd = torch.cdist(s, s)
-    td = torch.cdist(t, t)
-    td = td / (td.mean() + 1e-8)
-    sd = sd / (sd.mean() + 1e-8)
-    return F.smooth_l1_loss(sd, td)
+def rkd_loss(student, teacher):
+    student = F.normalize(student, dim=-1)
+    teacher = F.normalize(teacher, dim=-1)
+    student_distances = torch.cdist(student, student)
+    teacher_distances = torch.cdist(teacher, teacher)
+    return F.smooth_l1_loss(
+        student_distances / (student_distances.mean() + 1e-8),
+        teacher_distances / (teacher_distances.mean() + 1e-8),
+    )
 
 
-# ══════════════════════════════════════════════
-# N1_MIXED KD Trainer
-# ══════════════════════════════════════════════
 class N1MixedKDTrainer(SegmentationTrainer):
-    """
-    N1_MIXED 전용 트레이너.
-    - 배치의 MIXED_RATIO 비율에 Gaussian 노이즈 적용 (Student 입력)
-    - Teacher는 항상 clean 이미지 입력
-    - RKD loss: student adapter output ↔ teacher CLS token
-    - resume: _setup_train에서 optimizer state 자동 strip
-    - adapter 가중치: ADAPTER_SIDECAR 경로에서 로드/저장
-    """
+    """Segmentation trainer with mixed input noise and an RKD adapter."""
 
     def __init__(self, cfg=None, overrides=None, _callbacks=None):
         super().__init__(cfg, overrides, _callbacks)
-        self._teacher        = None
-        self._adapter        = None
-        self._s_feat         = None    # SPPF hook이 채움
-        self._t_feat         = None    # preprocess_batch가 채움
-        self._sppf_ch        = 512
-        self._orig_loss      = None
+        self._teacher = self._adapter = self._s_feat = self._t_feat = self._orig_loss = None
+        self._sppf_ch = 512
 
-    # ── SPPF 동적 탐색 ──
     def _find_sppf(self):
-        for m in self.model.model.model:
-            if m.__class__.__name__ == 'SPPF':
-                return m
-        for idx in [9, 10]:
+        for module in self.model.model.model:
+            if module.__class__.__name__ == "SPPF":
+                return module
+        for index in (9, 10):
             try:
-                m = self.model.model.model[idx]
-                if hasattr(m, 'cv2'):
-                    return m
+                module = self.model.model.model[index]
+                if hasattr(module, "cv2"):
+                    return module
             except (IndexError, AttributeError):
-                pass
-        raise RuntimeError('[N1Mixed] SPPF layer를 찾을 수 없습니다.')
+                continue
+        raise RuntimeError("N1Mixed could not find the SPPF layer.")
 
-    # ── 핵심: resume 체크포인트에서 optimizer 자동 strip ──
     def _setup_train(self, world_size=0):
         if self.args.resume:
-            _path = str(self.args.model)
-            if os.path.exists(_path):
-                _c = torch.load(_path, map_location='cpu', weights_only=False)
-                if _c.get('optimizer') is not None:
-                    _c.pop('optimizer', None)
-                    _c.pop('opt', None)
-                    torch.save(_c, _path)
-                    print('[N1Mixed] ✅ optimizer stripped from checkpoint')
-
-        # Ultralytics 8.4.62+ API 변경 (world_size 인자 제거) 대응
+            checkpoint_path = str(self.args.model)
+            if os.path.exists(checkpoint_path):
+                checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+                if checkpoint.get("optimizer") is not None:
+                    checkpoint.pop("optimizer", None)
+                    checkpoint.pop("opt", None)
+                    torch.save(checkpoint, checkpoint_path)
+                    print("[N1Mixed] optimizer stripped from checkpoint")
         try:
             super()._setup_train(world_size)
         except TypeError:
             super()._setup_train()
-
-        # Teacher 로드
         self._teacher = get_teacher()
-
-        # SPPF 탐색 + 채널 수
         sppf = self._find_sppf()
-        try:
+        if hasattr(sppf, "cv2"):
             self._sppf_ch = sppf.cv2.conv.out_channels
-        except AttributeError:
-            self._sppf_ch = 512
-
-        # SPPF hook 등록
-        def _sppf_hook(m, inp, out):
-            self._s_feat = out.mean(dim=[-1, -2])  # GAP → (B, C)
-        sppf.register_forward_hook(_sppf_hook)
-
-        # Adapter: sppf_ch → 256 → 768
+        sppf.register_forward_hook(lambda _module, _inputs, output: setattr(self, "_s_feat", output.mean(dim=[-1, -2])))
         self._adapter = nn.Sequential(
-            nn.Linear(self._sppf_ch, 256, bias=False),
-            nn.LayerNorm(256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 768, bias=False),
+            nn.Linear(self._sppf_ch, 256, bias=False), nn.LayerNorm(256), nn.ReLU(inplace=True), nn.Linear(256, 768, bias=False)
         ).cuda()
-
-        # resume 시 adapter 사이드카 로드 — checkpoint 경로 기반으로 동적 계산
-        resume_sidecar = str(self.args.model).replace('.pt', '_kd_adapter.pt')
-        if self.args.resume and os.path.exists(resume_sidecar):
+        sidecar = str(self.args.model).replace(".pt", "_kd_adapter.pt")
+        if self.args.resume and os.path.exists(sidecar):
             try:
-                state = torch.load(resume_sidecar, map_location='cpu', weights_only=False)
-                self._adapter.load_state_dict(state, strict=True)
-                print(f'[N1Mixed] ✅ adapter loaded from {resume_sidecar}')
-            except Exception as e:
-                print(f'[N1Mixed] ⚠️ adapter sidecar load 실패 (random init): {e}')
+                self._adapter.load_state_dict(torch.load(sidecar, map_location="cpu", weights_only=False), strict=True)
+                print(f"[N1Mixed] adapter loaded from {sidecar}")
+            except Exception as error:
+                print(f"[N1Mixed] adapter sidecar could not be loaded; using random initialization: {error}")
         else:
-            print('[N1Mixed] adapter: random init')
-
-        # optimizer에 adapter 파라미터 추가
-        kd_params = list(self._adapter.parameters())
-        self.optimizer.add_param_group({'params': kd_params, 'lr': self.args.lr0})
-        print(f'[N1Mixed] sppf_ch={self._sppf_ch} | kd_params={len(kd_params)} | lam={LAM_KD}')
-
-        # model.loss 래핑 (task_loss + LAM_KD * rkd_loss)
+            print("[N1Mixed] adapter: random initialization")
+        self.optimizer.add_param_group({"params": list(self._adapter.parameters()), "lr": self.args.lr0})
         self._orig_loss = self.model.loss
-        _trainer = self
 
-        def _kd_loss_wrapper(batch, preds=None):
-            loss, loss_items = _trainer._orig_loss(batch, preds)
-            s = _trainer._s_feat
-            t = _trainer._t_feat
-            if s is not None and t is not None:
-                kd = rkd_loss(_trainer._adapter(s), t)
-                loss = loss + LAM_KD * kd
+        def kd_loss(batch, predictions=None):
+            loss, loss_items = self._orig_loss(batch, predictions)
+            if self._s_feat is not None and self._t_feat is not None:
+                loss = loss + _runtime_settings["lambda_kd"] * rkd_loss(self._adapter(self._s_feat), self._t_feat)
             return loss, loss_items
 
-        self.model.loss = _kd_loss_wrapper
+        self.model.loss = kd_loss
 
-    # ── 배치 전처리: 노이즈 적용 + Teacher feature 캐싱 ──
     def preprocess_batch(self, batch):
-        batch = super().preprocess_batch(batch)  # imgs: float [0,1] on CUDA
-
+        batch = super().preprocess_batch(batch)
         if self._teacher is not None:
-            clean_imgs = batch['img'].clone()
-
-            # N1_MIXED: MIXED_RATIO 비율 배치에 노이즈 주입 (Student용)
-            B = clean_imgs.shape[0]
-            n_noisy = max(1, int(B * MIXED_RATIO))
-            noisy_imgs = batch['img'].clone()
-            idx = torch.randperm(B, device=noisy_imgs.device)[:n_noisy]
-            noise = torch.randn(n_noisy, *clean_imgs.shape[1:],
-                                device=noisy_imgs.device) * NOISE_SIGMA
-            noisy_imgs[idx] = torch.clamp(noisy_imgs[idx] + noise, 0, 1)
-            batch['img'] = noisy_imgs
-
-            # Teacher는 clean 이미지만 처리
+            clean_images = batch["img"].clone()
+            count = max(1, int(clean_images.shape[0] * _runtime_settings["mixed_noise_ratio"]))
+            noisy_images = clean_images.clone()
+            indexes = torch.randperm(clean_images.shape[0], device=clean_images.device)[:count]
+            noise = torch.randn(count, *clean_images.shape[1:], device=clean_images.device) * _runtime_settings["train_noise_sigma"]
+            noisy_images[indexes] = torch.clamp(noisy_images[indexes] + noise, 0, 1)
+            batch["img"] = noisy_images
             with torch.no_grad():
-                self._t_feat = extract_teacher_cls(self._teacher, clean_imgs, block=11)
-
+                self._t_feat = extract_teacher_cls(self._teacher, clean_images)
         return batch
 
-    # ── Epoch 종료 시 adapter 사이드카 저장 ──
     def save_model(self):
         super().save_model()
-        # adapter 사이드카: last.pt 경로 기반으로 저장
         try:
-            save_dir = self.save_dir
-            for ckpt_name in ['last.pt', 'best.pt']:
-                ckpt_path = save_dir / 'weights' / ckpt_name
-                if ckpt_path.exists() and self._adapter is not None:
-                    sidecar = str(ckpt_path).replace('.pt', '_kd_adapter.pt')
-                    torch.save(self._adapter.state_dict(), sidecar)
-            print(f'[N1Mixed] adapter sidecar saved')
-        except Exception as e:
-            print(f'[N1Mixed] ⚠️ adapter sidecar save 실패: {e}')
+            for name in ("last.pt", "best.pt"):
+                checkpoint = self.save_dir / "weights" / name
+                if checkpoint.exists() and self._adapter is not None:
+                    torch.save(self._adapter.state_dict(), str(checkpoint).replace(".pt", "_kd_adapter.pt"))
+        except Exception as error:
+            print(f"[N1Mixed] adapter sidecar could not be saved: {error}")
 
 
-# ══════════════════════════════════════════════
-# 실행 함수
-# ══════════════════════════════════════════════
-def run_n1mixed():
-    data_yaml = _find_data_yaml()
-    print(f'[N1Mixed] DATA_YAML: {data_yaml}')
-    print(f'[N1Mixed] RESUME: {LAST_PT}')
-    print(f'[N1Mixed] ep28 → {FULL_EPOCHS}ep | batch={BATCH} | lam={LAM_KD}')
-
-    if not os.path.exists(LAST_PT):
-        raise FileNotFoundError(
-            f'체크포인트 없음: {LAST_PT}\n'
-            f'Drive에서 복사하거나 경로를 수정하세요.')
-
-    # Ultralytics 공식 resume 패턴: model=checkpoint 경로 + resume=True
-    model = YOLO(LAST_PT)
+def run_n1mixed(**overrides):
+    """Run training from a notebook or another Python caller."""
+    settings = _load_config(overrides.pop("config", "configs/n1mixed.yaml"))
+    settings.update({key: value for key, value in overrides.items() if value is not None})
+    global _runtime_settings
+    _runtime_settings = {key: settings[key] for key in DEFAULTS if key in settings}
+    project = str(settings.pop("project", "runs/n1mixed"))
+    data_yaml = settings.pop("data", None) or _find_data_yaml()
+    data_yaml = _ensure_nc16(data_yaml, project)
+    weights = settings.pop("weights", "yolov8s-seg.pt")
+    resume = bool(settings.pop("resume", False))
+    name = settings.pop("name", "N1_MIXED")
+    backup_dir = settings.pop("backup_dir", None)
+    print(f"[N1Mixed] data={data_yaml} resume={resume} epochs={settings['epochs']} batch={settings['batch']}")
+    if resume and not Path(weights).expanduser().exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {weights}")
+    trainer_settings = {key: value for key, value in settings.items() if key not in {"lambda_kd", "mixed_noise_ratio", "train_noise_sigma"}}
+    model = YOLO(weights)
     results = model.train(
-        data=data_yaml,
-        epochs=FULL_EPOCHS,
-        batch=BATCH,
-        imgsz=IMGSZ,
-        lr0=LR0,
-        lrf=0.1,
-        momentum=0.937,
-        optimizer='auto',
-        project=PROJECT,
-        name=RUN_NAME,
-        exist_ok=True,
-        resume=True,
-        trainer=N1MixedKDTrainer,
-        verbose=True,
-        plots=False,
+        data=data_yaml, project=project, name=name, exist_ok=True, resume=resume,
+        lrf=LREF, momentum=MOMENTUM, optimizer=OPTIMIZER, trainer=N1MixedKDTrainer,
+        verbose=True, plots=False, **trainer_settings,
     )
-
-    best_pt = str(results.save_dir / 'weights' / 'best.pt')
-    print(f'\n[완료] best.pt → {best_pt}')
-
-    # Drive 백업
-    drive_dir = Path('/kaggle/working/drive_backup')
-    drive_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy(best_pt, drive_dir / 'N1_MIXED_50ep_best.pt')
-    print(f'[백업] → {drive_dir}/N1_MIXED_50ep_best.pt')
-
+    best_pt = str(results.save_dir / "weights" / "best.pt")
+    if backup_dir:
+        destination = Path(backup_dir).expanduser()
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy(best_pt, destination / Path(best_pt).name)
+        print(f"[N1Mixed] backup={destination / Path(best_pt).name}")
     return best_pt
 
 
-if __name__ == '__main__':
-    run_n1mixed()
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train N1_MIXED RKD segmentation.")
+    parser.add_argument("--data", help="Path to data.yaml (otherwise ISAID_DATA or dataset discovery).")
+    parser.add_argument("--weights", default="yolov8s-seg.pt")
+    parser.add_argument("--resume", action="store_true", help="Resume from --weights.")
+    parser.add_argument("--project", default="runs/n1mixed")
+    parser.add_argument("--name", default="N1_MIXED")
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--batch", type=int)
+    parser.add_argument("--imgsz", type=int)
+    parser.add_argument("--lr0", type=float)
+    parser.add_argument("--lambda-kd", dest="lambda_kd", type=float)
+    parser.add_argument("--mixed-ratio", dest="mixed_noise_ratio", type=float)
+    parser.add_argument("--noise-sigma", dest="train_noise_sigma", type=float)
+    parser.add_argument("--config", default="configs/n1mixed.yaml")
+    parser.add_argument("--backup-dir")
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved settings without training.")
+    return parser.parse_args()
+
+
+def main():
+    args = vars(parse_args())
+    dry_run = args.pop("dry_run")
+    config = args.get("config")
+    settings = _load_config(config)
+    settings.update({key: value for key, value in args.items() if value is not None and key != "config"})
+    data_yaml = settings.get("data") or _find_data_yaml()
+    if dry_run:
+        print(yaml.safe_dump(settings, sort_keys=True).strip())
+        print(f"data: {Path(data_yaml).expanduser().resolve()}")
+        return
+    run_n1mixed(**args)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,7 @@
-# N1_MIXED training configuration (reference)
-# These mirror the CONFIG block in src/n1mixed_kd_trainer.py
+# N1_MIXED training defaults for src/n1mixed_kd_trainer.py.
+# Read by the trainer: epochs, batch, imgsz, lr0, lambda_kd, mixed_noise_ratio, train_noise_sigma.
+# Other keys (teacher*, student, adapter, lrf, momentum, optimizer, eval_noise_sigma, dataset) are
+# fixed in code and listed here for reference only.
 
 teacher: dinov2_vitb14      # frozen, torch.hub: facebookresearch/dinov2
 teacher_input_size: 448     # multiple of 14 (DINOv2 patch size)
@@ -18,7 +20,7 @@ optimizer: auto
 
 lambda_kd: 0.5             # RKD loss weight
 mixed_noise_ratio: 0.5    # fraction of batch with Gaussian noise (student only)
-train_noise_sigma: 0.196  # 50/255, training-time noise strength
+train_noise_sigma: 0.19607843137254902  # 50/255, training-time noise strength
 eval_noise_sigma: 0.3     # evaluation noise strength
 
 dataset: iSAID            # 16 classes, YOLO segmentation format

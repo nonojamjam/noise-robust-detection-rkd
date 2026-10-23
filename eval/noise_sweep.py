@@ -1,23 +1,9 @@
-"""
-방산(iSAID) 노이즈 강건성 σ-sweep — P2로 학습된 모델들의 노이즈별 mAP 비교.
+"""Evaluate iSAID box and mask mAP@50 over Gaussian noise levels.
 
-졸작 보완 #2 (검증 구멍 메우기): "COCO에서 -2.7% 악화"가 방산에서도 같은지 직접 측정.
-COCO용 eval_kd_noise_sweep_coco.py를 iSAID(nc=16, seg)로 적응 + box·seg 둘 다 + 곡선 PNG.
-
-⚠️ 입력은 'P2로 iSAID head까지 학습된 ultralytics best.pt' 여야 함 (backbone 단독 불가 — nc=16 head 필요).
-   즉 finetune_isaid_head.py를 먼저 돌린 산출물(runs_*/ft/weights/best.pt)을 평가한다.
-
-평가 방식: val 이미지에 가우시안 노이즈를 디스크에 캐싱(견고) → model.val() → box·seg mAP50.
-
-사용:
-  # P2 먼저 (COCO 백본 / NR 백본) → 각각 best.pt 생성된 뒤:
-  python eval_isaid_noise_sweep.py \
-    --data_yaml isaid_data.yaml \
-    --models baseline:weights/runs_baseline_head/ft/weights/best.pt \
-             kd:weights/runs_kd_nr_head/ft/weights/best.pt \
-    --sigmas 0.0 0.1 0.2 0.3 \
-    --max_images 300 \
-    --out_dir eval_out/isaid_sweep
+Example:
+  python eval/noise_sweep.py --data_yaml data.yaml \
+    --models baseline:weights/baseline.pt kd:weights/kd.pt \
+    --sigmas 0.0 0.1 0.2 0.3 --out_dir eval_out/isaid_sweep
 """
 import argparse, csv, json, os, random, shutil, sys
 from pathlib import Path
@@ -30,25 +16,24 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 
 
-# ── 노이즈 ──────────────────────────────────────────────────────────────────
 def apply_noise_np(arr: np.ndarray, sigma: float) -> np.ndarray:
-    """float32 [0,1] HWC numpy → gaussian noise (clip 0~1)."""
+    """Add clipped Gaussian noise to a float32 HWC image in [0, 1]."""
     if sigma == 0.0:
         return arr
     return (arr + sigma * np.random.randn(*arr.shape).astype(np.float32)).clip(0.0, 1.0)
 
 
 def label_path_for(img_path: Path) -> Path:
-    """이미지 경로 → 라벨 경로. 문자열 replace 대신 path-part 치환 (GPT 검수: 견고)."""
+    """Map an image path to its corresponding label path."""
     parts = list(img_path.parts)
     idxs = [i for i, x in enumerate(parts) if x == "images"]
     if not idxs:
         raise ValueError(f"'images' 디렉토리 없는 경로: {img_path}")
-    idx = idxs[-1]  # 가장 안쪽 images 기준
+    idx = idxs[-1]
     return Path(*parts[:idx], "labels", *parts[idx + 1:]).with_suffix(".txt")
 
 
-# ── 노이즈 val 캐시 생성 (디스크에 노이즈 이미지 + 라벨 복사 + 임시 yaml) ──────
+# Build a noisy validation cache below --out_dir.
 def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> str:
     import yaml
 
@@ -74,7 +59,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
         imgs += val_dir.rglob(ext)
     imgs = sorted(imgs)
     if len(imgs) > max_n:
-        random.seed(42)                 # σ 간 동일 이미지 집합 보장 (공정)
+        random.seed(42)
         imgs = random.sample(imgs, max_n)
 
     out_img = Path(out_dir) / "images"
@@ -97,7 +82,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
             arr = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             arr = apply_noise_np(arr, sigma)
             bgr = cv2.cvtColor((arr * 255).round().astype(np.uint8), cv2.COLOR_RGB2BGR)
-        # PNG로 저장 — JPEG 재인코딩 손실이 σ 신호를 오염시키는 것 방지 (GPT 검수)
+        # Avoid JPEG re-encoding changes to the injected noise.
         cv2.imwrite(str((out_img / p.stem).with_suffix(".png")), bgr)
         shutil.copy(str(lbl), str(out_lbl / (p.stem + ".txt")))
         ok += 1
@@ -106,7 +91,7 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
     if ok == 0:
         raise RuntimeError(f"노이즈 val 0장 — val 이미지/라벨 경로 확인: {val_dir}")
 
-    # names 항상 채우기 (없으면 인덱스명) + dict→list 정규화 (GPT 검수)
+    # Normalize names for Ultralytics.
     names = cfg.get("names")
     nc = int(cfg.get("nc", 16))
     if names is None:
@@ -129,22 +114,18 @@ def make_noisy_val(yaml_path: str, out_dir: str, sigma: float, max_n: int) -> st
     return cached_yaml
 
 
-# ── 모델 로드 (P2 ultralytics best.pt, nc=16 native) ────────────────────────
 def load_p2_model(path: str):
     from ultralytics import YOLO
     try:
-        return YOLO(path)            # P2 best.pt = 완전한 nc=16 ultralytics ckpt
+        return YOLO(path)
     except Exception as e:
         raise RuntimeError(
             f"모델 로드 실패: {path}\n"
-            f"  → 이 스크립트는 finetune_isaid_head.py가 만든 'runs_*/ft/weights/best.pt'(nc=16) "
-            f"를 입력으로 받습니다. try4kd 포맷(weights/p2_*.pt)이 아니라 best.pt 경로를 주세요.\n"
-            f"  원본 에러: {e}")
+            f"Expected an iSAID-compatible Ultralytics checkpoint. Original error: {e}")
 
 
-# ── 평가 (box·seg mAP50 둘 다) ───────────────────────────────────────────────
 def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
-    cache_key = f"s{sigma:.4f}_n{max_images}_png"  # 정밀도+포맷 반영(stale 방지)
+    cache_key = f"s{sigma:.4f}_n{max_images}_png"
     cache_dir = os.path.join(out_dir, "noisy_val_cache", cache_key)
     eval_yaml = make_noisy_val(yaml_path, cache_dir, sigma, max_images)
 
@@ -165,7 +146,6 @@ def eval_box_seg(model, yaml_path, sigma, out_dir, max_images, device):
     return box50, seg50
 
 
-# ── 곡선 PNG ─────────────────────────────────────────────────────────────────
 def plot_curve(results, sigmas, out_dir):
     try:
         import matplotlib
@@ -186,12 +166,11 @@ def plot_curve(results, sigmas, out_dir):
         ax.grid(alpha=0.3); ax.legend()
     out_png = os.path.join(out_dir, "isaid_noise_curve.png")
     fig.tight_layout(); fig.savefig(out_png, dpi=140); plt.close(fig)
-    print(f"[saved] {out_png}  ← 방산 노이즈 강건성 슬라이드용")
+    print(f"[saved] {out_png}")
 
 
-# ── 메인 ─────────────────────────────────────────────────────────────────────
 def parse_args():
-    p = argparse.ArgumentParser(description="iSAID 방산 노이즈 σ-sweep (box·seg)")
+    p = argparse.ArgumentParser(description="iSAID noise sigma sweep (box and segmentation mAP)")
     p.add_argument("--data_yaml", required=True, help="iSAID yaml (nc=16)")
     p.add_argument("--models", nargs="+", required=True,
                    help="label:best.pt 쌍들. 예) baseline:.../best.pt kd:.../best.pt")
@@ -207,7 +186,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     print(f"[iSAID sweep] device={args.device} sigmas={args.sigmas} max={args.max_images}")
 
-    # "label:path" 파싱
+    # Parse label:path model specifications.
     model_specs = []
     for item in args.models:
         if ":" not in item:
@@ -220,7 +199,7 @@ def main():
         model_specs.append((label, path))
 
     if not model_specs:
-        print("[error] 평가할 모델 없음 — P2(finetune_isaid_head.py) 먼저 돌려 best.pt 생성 필요")
+        print("[error] No usable model checkpoints were provided.")
         return
 
     results = {}  # label -> {str(sigma) -> {"box":, "seg":}}
@@ -236,7 +215,7 @@ def main():
             print(f"  → Box {box50:.4f} | Seg {seg50:.4f}")
         del model
 
-    # ── 표 (seg 기준 + clean 대비 drop) ──────────────────────────────────────
+    # Print segmentation and box metrics.
     print("\n\n" + "━" * 64)
     print("  Table. iSAID σ-sweep  (Seg mAP@50, 괄호=Box)")
     print("━" * 64)
@@ -249,7 +228,7 @@ def main():
             s, b = cell.get("seg", -1), cell.get("box", -1)
             row += f"{(f'{s:.4f} ({b:.3f})' if s >= 0 else '—'):<20}"
         print(row)
-    # clean 대비 drop (seg)
+    # Report the relative segmentation change from the first to final sigma.
     print("  " + "-" * 58)
     print("  [clean 대비 Seg mAP 상대 변화]")
     for lab, _ in model_specs:
@@ -261,7 +240,7 @@ def main():
                 print(f"    {lab:<12}: σ{args.sigmas[0]}→σ{args.sigmas[-1]}  {rel:+.1f}%")
     print("━" * 64)
 
-    # ── 저장 + 곡선 ──────────────────────────────────────────────────────────
+    # Save machine-readable results and a curve.
     with open(os.path.join(args.out_dir, "results.json"), "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     with open(os.path.join(args.out_dir, "table.csv"), "w", newline="") as f:
@@ -277,8 +256,6 @@ def main():
             w.writerow(r)
     plot_curve(results, args.sigmas, args.out_dir)
     print(f"\n[saved] {args.out_dir}/results.json, table.csv")
-    print("\n해석: baseline보다 KD의 σ0→σ0.3 하락폭이 작으면 → 방산서 KD가 노이즈 강건.")
-    print("      크면 → COCO와 동일한 한계가 방산서도 확인됨 (정직한 negative, 둘 다 의미).")
 
 
 if __name__ == "__main__":
