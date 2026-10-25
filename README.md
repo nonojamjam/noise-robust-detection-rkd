@@ -16,6 +16,8 @@ Lightweight detectors degrade sharply under satellite/aerial sensor noise. I dis
 On iSAID (16 classes), under strong Gaussian noise (σ=0.3), the proposed training kept detecting where the baseline failed in our June experiments — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
 
 > All reported numbers are single-seed (seed=0) runs from the June 2026 presentation and are **preliminary** — see [Known issues](#known-issues-found-after-the-june-presentation).
+>
+> Follow-up work after June (official iSAID split, spatial KD, probes) is on the [`fall2026-heterogeneous-kd`](https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026) branch.
 
 | Condition (50 epochs; **not hyperparameter-matched**, see Known issues 2) | box mAP50 (Clean) | box mAP50 (Noisy, σ=0.3) |
 |---|---|---|
