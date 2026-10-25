@@ -1,0 +1,19 @@
+{
+  "exp": "S0",
+  "seed": 0,
+  "epochs": 10,
+  "run_id": "S0_10ep_seed0",
+  "eval_ckpt": "last",
+  "run_dir": "/kaggle/working/seed_sweep/S0_10ep_seed0",
+  "manifest": "/kaggle/working/seed_sweep/S0_10ep_seed0/manifest.json",
+  "map50_clean": 0.5974022318884837,
+  "map50_noisy": 0.38267226858042075,
+  "seg_map50_clean": 0.5491771948871609,
+  "seg_map50_noisy": 0.35605705229832246,
+  "metric_family": "box",
+  "kd_calls": 23420,
+  "kd_applied": 23420,
+  "kd_mean": 0.973422929838007,
+  "minutes": 533.5,
+  "peak_reserved_gib": 14.31
+}
