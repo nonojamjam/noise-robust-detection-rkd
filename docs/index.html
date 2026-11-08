@@ -92,8 +92,8 @@
 <section><div class="wrap">
   <h2>How it works</h2>
   <p>Noise corrupts individual feature magnitudes, but the <b>relational geometry</b> between samples — encoded by a large self-supervised foundation model — is more stable. We transfer that geometry into a small detector via a distance-wise relational loss.</p>
-  <img src="assets/pipeline.png" alt="KD training pipeline: DINOv2 teacher + YOLOv8 student + MLP adapter → RKD + detection loss" style="width:100%;border-radius:10px;background:#fff;padding:12px;margin:4px 0">
-  <p class="note">Training pipeline. <b>Total loss = YOLO(det+seg) + λ·RKD</b> (λ=0.5). At inference the teacher and adapter are removed → plain YOLOv8s-seg, zero overhead.</p>
+  <img src="assets/pipeline.png" alt="Training pipeline from the fall 2026 thesis: DINOv2 patch tokens aligned to YOLOv8 neck P4 through a training-only adapter" style="width:100%;border-radius:10px;background:#fff;padding:12px;margin:4px 0">
+  <p class="note">Training pipeline as drawn in the fall 2026 graduation thesis (Korean labels; follow-up spatial KD version — teacher patch tokens aligned to the student's neck P4). The June method on this page instead uses the CLS token, the SPPF feature, an MLP adapter and <b>Total loss = YOLO(det+seg) + λ·RKD</b> (λ=0.5). In both, the teacher and adapter are removed at inference → plain YOLOv8s-seg, zero overhead.</p>
   <ul>
     <li><b>Heterogeneous</b> ViT→CNN transfer (most KD assumes the same architecture family).</li>
     <li><b>50:50 mixed-noise training</b> — the teacher sees noise-free (augmented) input; the student sees half-noisy batches. Training σ=50/255 and evaluation σ=0.3 deliberately test robustness beyond the training noise.</li>

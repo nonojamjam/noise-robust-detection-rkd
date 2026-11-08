@@ -51,8 +51,9 @@ Training noise is σ=50/255 while evaluation uses σ=0.3, deliberately testing r
 
 **Core idea:** noise corrupts individual feature magnitudes, but the *relational geometry* between samples (encoded by the foundation model) is more stable. Transferring that geometry via RKD keeps the small student generalizing under degradation.
 
-<!-- TODO: add Method Overview figure -->
-<!-- ![Method Overview](docs/pipeline.png) -->
+![Training pipeline (fall 2026 thesis version)](docs/assets/pipeline.png)
+
+*Training pipeline as drawn in the fall 2026 graduation thesis (Korean labels). This is the **follow-up spatial KD** version: DINOv2 patch tokens (768×32×32) aligned to the student's neck P4 feature through a training-only conv adapter. The June method described on this page uses the teacher CLS token, the SPPF feature, an MLP adapter and a distance-wise RKD loss instead — see the diagram below and the [`fall2026-heterogeneous-kd`](https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026) branch for the spatial version. In both, the teacher and adapter are removed at inference.*
 
 ```
 Student (YOLOv8s) ──SPPF feature──► Adapter (MLP) ──┐
