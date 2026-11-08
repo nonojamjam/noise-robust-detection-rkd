@@ -10,6 +10,11 @@ An audit after June found two problems that affect the June numbers (see `main` 
 The 10-epoch runs in the results table use the **official iSAID train/val scene split**: 1,411 train scenes / 458 val scenes, 18,732 / 6,048 tiles, 0 shared scenes. The lists are in `data_split/` (sha256 `246efa0a…` / `be763a31…`). Labels have the prefix removed, and evaluation uses `last.pt`.
 
 ## Method (what changed from June)
+
+![Training pipeline](../docs/assets/pipeline.png)
+
+*Training pipeline (figure 1 of the graduation thesis, Korean labels).*
+
 - **Teacher.** Frozen DINOv2 ViT-B/14. Input is 448 px with ImageNet normalization, and the teacher uses **patch tokens (32×32)** instead of the CLS token.
 - **Student.** YOLOv8s-seg. KD is applied at neck P4 (`model[18]`, 256×40×40) through a training-only adapter (Conv3×3 → GN → GELU → Conv1×1 → resize to 32×32). The adapter is removed at inference.
 - **Loss.** `L = L_det + λ·L_sp`, where `L_sp` is a per-position cosine distance after a fixed LayerNorm, averaged over positions except the 1 % highest-norm teacher tokens per image. The teacher always sees the clean image; half of each batch gets Gaussian noise σ = 50/255.
