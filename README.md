@@ -1,8 +1,8 @@
-# Noise-Robust Object Detection via Heterogeneous Relational Knowledge Distillation
+# Noise-Robust Object Detection via Heterogeneous ViT → CNN Knowledge Distillation
 
-**DINOv2 (ViT) → YOLOv8s-seg (CNN): transferring relational structure to keep a lightweight detector accurate under sensor noise.**
+**DINOv2 (ViT) → YOLOv8s-seg (CNN): mixed-noise training plus centred spatial distillation to keep a lightweight detector accurate under sensor noise.**
 
-🔗 **[Live demo →](https://nonojamjam.github.io/noise-robust-detection-rkd/)** — drag the noise slider and watch the baseline go blind while the distilled model holds.
+🔗 **[Live demo →](https://nonojamjam.github.io/noise-robust-detection-rkd/)** — drag the noise slider, then see the official-split results.
 
 > Capstone research project, Chungbuk National University (Dept. of Electronic Engineering).
 > ML and all code: **Juhyeok Park**. Data preparation and documentation: Jiwon Lee. Advisor: Prof. Hyeongwon Kim.
@@ -11,18 +11,27 @@
 
 ## TL;DR
 
-Lightweight detectors degrade sharply under satellite/aerial sensor noise. I distill the **relational (pairwise-distance) structure** of a frozen self-supervised foundation model (DINOv2 ViT-B/14) into a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training.
+Lightweight detectors degrade sharply under satellite/aerial sensor noise. A frozen self-supervised foundation model (DINOv2 ViT-B/14) teaches a small CNN detector (YOLOv8s-seg) across a **heterogeneous ViT→CNN gap**, combined with 50:50 mixed-noise training. The teacher and the alignment adapter are removed at inference, so there is **no additional inference cost**.
 
-On iSAID (16 classes), under strong Gaussian noise (σ=0.3), the proposed training kept detecting where the baseline failed in our June experiments — with **no additional inference cost** (the teacher and the alignment adapter are removed at inference).
+**Final results (graduation thesis v2.1, 2026.11)** — official iSAID split (18,732 / 6,048 patches), labels fixed, 10 epochs, box mAP50, Gaussian σ=0.3, every checkpoint re-evaluated on the same noisy images:
 
-> All reported numbers are single-seed (seed=0) runs from the June 2026 presentation and are **preliminary** — see [Known issues](#known-issues-found-after-the-june-presentation).
->
-> Follow-up work after June (official iSAID split, spatial KD, probes) is on the [`fall2026-heterogeneous-kd`](https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026) branch.
+| Condition (seed 0) | Clean | Noisy | Noisy − S0 |
+|---|---|---|---|
+| BL0 — no noise training* | 0.631 | 0.018 | — |
+| S0 — noise training, no KD | 0.597 | 0.381 | — |
+| N1 — + relational KD (the June method on `main`) | 0.593 | 0.382 | +0.001 |
+| S1 — + plain spatial KD, λ 0.5 | 0.596 | 0.374 | −0.008 |
+| **X1 — + centred spatial KD, λ 2.5** | **0.611** | **0.401** | **+0.020** |
+| X2 — X1 with teacher positions shuffled | 0.587 | 0.375 | −0.006 |
 
-| Condition (50 epochs; **not hyperparameter-matched**, see Known issues 2) | box mAP50 (Clean) | box mAP50 (Noisy, σ=0.3) |
+\* different GPU/software stack. Seed 1: X1 − S0 = +0.010, N1 − S0 = −0.002. Noise training does most of the work; relational KD adds nothing; centred spatial KD adds a smaller, repeated gain that disappears when the teacher's positions are shuffled (seed 0). Full table (incl. S2 and P), σ sweep, bootstrap, code and raw numbers: [`fall2026-heterogeneous-kd`](https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026) branch.
+
+> **The code on `main` and the June numbers further below are the June 2026 presentation version** (relational KD). They were measured on a leaky public split with inflated boxes — see [Known issues](#known-issues-found-after-the-june-presentation) — and are kept only as a record.
+
+| June 2026 condition (50 epochs; **not hyperparameter-matched**, superseded) | box mAP50 (Clean) | box mAP50 (Noisy, σ=0.3) |
 |---|---|---|
 | BaseLine0 (plain transfer learning) | 0.2775 | 0.0090 |
-| **N1_MIXED (proposed)** | **0.4264** | **0.1961** |
+| N1_MIXED | 0.4264 | 0.1961 |
 
 Final deployed model: `YOLOv8s-seg`, **11.8M params / 22MB** — teacher + adapter fully removed at inference.
 
@@ -63,7 +72,7 @@ Total loss = YOLO(det+seg) + λ · RKD     (λ = 0.5)
 At inference: teacher + adapter removed → plain YOLOv8s-seg.
 ```
 
-## Results
+## June 2026 results (superseded)
 
 **Ablation (10 epochs) — isolating KD vs. noise contributions:**
 
@@ -80,14 +89,14 @@ At inference: teacher + adapter removed → plain YOLOv8s-seg.
 
 ## Known issues (found after the June presentation)
 
-The numbers above are the June 2026 capstone presentation results, kept as presented except for the two corrections marked below. Later audits found problems that affect **all** of them; they should be read as preliminary.
+The June 2026 numbers on this page are the capstone presentation results, kept as presented except for the two corrections marked below. Later audits found problems that affect **all** of them; they are superseded by the official-split re-run in the TL;DR.
 
 1. **10-epoch baseline was not 10 epochs.** The BaseLine0 checkpoint behind the ablation row was trained for 2 epochs (`train_args.epochs=2`, batch 16). Comparisons against that row — including "KD alone +0.1606" — are invalid and have been removed.
 2. **The 50-epoch pair is not hyperparameter-matched** (BaseLine0: batch 2, imgsz 800, AdamW; N1_MIXED: batch 8, imgsz 640, auto). It is not an effect size.
 3. **Train/validation overlap in the dataset version used.** In the public Kaggle conversion we used, most validation tiles are byte-identical copies of training tiles, so validation mAP was largely measured on images seen during training.
 4. **Label-format issue.** Each label line carries a `cx cy w h` box prefix before the polygon; the loader read it as extra polygon vertices, inflating ground-truth boxes.
 
-All conditions are being re-run on the official iSAID train/val split with the label fix.
+All conditions were re-run on the official iSAID train/val split with the label fix and matched settings; see the TL;DR table and the `fall2026-heterogeneous-kd` branch.
 
 ## Contributions
 
@@ -101,17 +110,13 @@ All ML and code by **Juhyeok Park**; data preparation and documentation by Jiwon
   - adapter weights lost on checkpoint save → **adapter sidecar** save/load
 - **Experiment design** — 4-condition ablation, σ-sweep noise evaluation, qualitative demo.
 
-## Honest limitations & next directions
+## Limitations & next directions
 
-This was completed under fixed compute/schedule, so:
-- single seed (seed=0) → no confidence intervals yet;
-- Gaussian noise + iSAID only → no cross-dataset (DOTA/xView) or JPEG/blur validation;
-- λ fixed at 0.5 → no sensitivity sweep.
+- Two training seeds for the main comparison (S0, N1, X1); one for the shuffled controls and P.
+- Centring and λ changed together in X1; one plain λ 2.5 run (P = 0.391) lands in between, so they are not separated.
+- Gaussian noise + iSAID only; at σ = 0.4 the sign of X1 − S0 depends on the seed. 10 epochs, mosaic effectively off.
 
-**Research roadmap** (these limitations *are* the next steps):
-- multi-seed + λ grid search + σ robustness curve;
-- real satellite raw data + compound degradation;
-- **federated-learning integration** — for defense/security domains where data cannot leave the node. *A SCAFFOLD/FedAvg prototype exists (the original motivation behind the "Fed" name); it is exploratory and not part of the benchmark above.*
+**Next:** more seeds and a λ grid for the centred loss, compound degradation and other datasets (DOTA/xView), and **federated-learning integration** for data that cannot leave the node (*a SCAFFOLD/FedAvg prototype exists; exploratory, not part of the benchmark*).
 
 ## Repository
 

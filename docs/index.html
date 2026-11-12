@@ -59,13 +59,13 @@
 </head>
 <body>
 <header><div class="wrap">
-  <h1>Noise-Robust Object Detection via<br>Heterogeneous Relational Knowledge Distillation</h1>
-  <p class="lead">Distilling the relational structure of DINOv2 (ViT) into a lightweight YOLOv8 (CNN) detector — so it keeps seeing through sensor noise.</p>
-  <p class="kr">위성·항공 영상의 센서 노이즈 환경에서 경량 탐지기의 강건성을 이종 관계 지식증류로 확보</p>
+  <h1>Noise-Robust Object Detection via<br>Heterogeneous ViT → CNN Knowledge Distillation</h1>
+  <p class="lead">Keeping a lightweight YOLOv8 (CNN) detector working under satellite sensor noise: mixed-noise training plus centred spatial distillation from DINOv2 (ViT) patch tokens. Teacher and adapter are removed at inference.</p>
+  <p class="kr">위성·항공 영상의 센서 노이즈 환경에서 경량 탐지기의 강건성을 잡음 학습과 이종(ViT→CNN) 공간 지식증류로 확보</p>
   <p class="by">ML &amp; all code: <b>Juhyeok Park</b> · data/docs: Jiwon Lee · advisor: Prof. Hyeongwon Kim · Capstone, Chungbuk National University</p>
   <div class="stats">
-    <div class="stat"><div class="v"><span class="from">0.009</span> → <span class="to">0.196</span></div><div class="k">Noisy box mAP50 (σ=0.3) · 50-ep, not hyperparameter-matched</div></div>
-    <div class="stat"><div class="v"><span class="from">0.278</span> → <span class="to">0.426</span></div><div class="k">Clean box mAP50 · 50-ep, not hyperparameter-matched</div></div>
+    <div class="stat"><div class="v"><span class="from">0.018</span> → <span class="to">0.381</span></div><div class="k">Noisy box mAP50 (σ=0.3) from noise training · official iSAID split</div></div>
+    <div class="stat"><div class="v"><span class="to">+0.020</span> <span class="from">/ +0.010</span></div><div class="k">More from centred spatial KD (seeds 0 / 1)</div></div>
     <div class="stat"><div class="v">11.8M <span class="from">/ 22MB</span></div><div class="k">Deployed model size</div></div>
     <div class="stat"><div class="v">+0<span class="from"> cost</span></div><div class="k">Added inference cost</div></div>
   </div>
@@ -73,8 +73,8 @@
 
 <section><div class="wrap">
   <h3>Try it — drag to compare</h3>
-  <h2>Under the same heavy noise, the baseline goes blind — the distilled model still sees</h2>
-  <p>Same iSAID tile (P1130 aircraft) at strong Gaussian noise (σ=0.3). Drag the handle: <b style="color:var(--red)">left = Baseline</b> (plain transfer learning) finds nothing; <b style="color:var(--green)">right = Proposed</b> (DINOv2→YOLOv8 relational KD) keeps the lock.</p>
+  <h2>Under the same heavy noise, the baseline goes blind — the noise-trained model still sees</h2>
+  <p>Same iSAID tile (P1130 aircraft) at strong Gaussian noise (σ=0.3). Drag the handle: <b style="color:var(--red)">left = Baseline</b> (plain transfer learning) finds nothing; <b style="color:var(--green)">right = June model</b> (noise training + DINOv2→YOLOv8 relational KD) keeps the lock. These are the June checkpoints; the qualitative gap comes mostly from noise training (see Results).</p>
   <div class="demo">
     <div class="ba" id="ba">
       <img class="ba-base" src="assets/n1.png" alt="Proposed model detects the aircraft under noise">
@@ -82,54 +82,78 @@
       <div class="ba-div" id="baDiv"></div>
       <div class="ba-handle" id="baHandle"><span>⟷</span></div>
       <span class="ba-tag l"><span class="dot r" style="margin-right:5px"></span>Baseline · 0 detections</span>
-      <span class="ba-tag r">Proposed · detects ✓<span class="dot g" style="margin-left:6px"></span></span>
+      <span class="ba-tag r">June model · detects ✓<span class="dot g" style="margin-left:6px"></span></span>
     </div>
     <input type="range" id="wipe" min="0" max="100" value="55" aria-label="compare baseline and proposed">
-  <p class="note" style="margin-top:14px">At σ=0.3 the baseline drops to <b>box mAP50 0.009</b> (near-total failure); the proposed model holds <b>0.196</b>. Qualitative tile from iSAID validation. June 2026 results, preliminary — see Known issues below.</p>
+  <p class="note" style="margin-top:14px">Qualitative tile from the June experiments. On the official split, the model without noise training scores <b>0.018</b> noisy box mAP50 and noise training lifts it to <b>0.381</b>.</p>
   </div>
 </div></section>
 
 <section><div class="wrap">
   <h2>How it works</h2>
-  <p>Noise corrupts individual feature magnitudes, but the <b>relational geometry</b> between samples — encoded by a large self-supervised foundation model — is more stable. We transfer that geometry into a small detector via a distance-wise relational loss.</p>
+  <p>The student (YOLOv8s-seg) trains on 50:50 clean/noisy batches. In the final version, a training-only adapter maps its neck P4 feature to the 32×32 grid of DINOv2 patch tokens, and a cosine loss aligns them <b>position by position</b> — after subtracting each image's mean token from teacher and student (<b>centring</b>). Each variant is checked against a control in which the teacher's token positions are shuffled per image.</p>
   <img src="assets/pipeline.png" alt="Training pipeline from the fall 2026 thesis: DINOv2 patch tokens aligned to YOLOv8 neck P4 through a training-only adapter" style="width:100%;border-radius:10px;background:#fff;padding:12px;margin:4px 0">
-  <p class="note">Training pipeline as drawn in the fall 2026 graduation thesis (Korean labels; follow-up spatial KD version — teacher patch tokens aligned to the student's neck P4). The June method on this page instead uses the CLS token, the SPPF feature, an MLP adapter and <b>Total loss = YOLO(det+seg) + λ·RKD</b> (λ=0.5). In both, the teacher and adapter are removed at inference → plain YOLOv8s-seg, zero overhead.</p>
+  <p class="note">Training pipeline from the graduation thesis (Korean labels). Teacher and adapter are removed at inference → plain YOLOv8s-seg, zero overhead.</p>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:14px 0 4px">
+    <img src="assets/ex_clean.jpg" alt="iSAID tile, clean" style="width:100%;border-radius:6px">
+    <img src="assets/ex_noisy.jpg" alt="Same tile with training noise sigma 50/255" style="width:100%;border-radius:6px">
+    <img src="assets/ex_teacher_pca.png" alt="DINOv2 patch-token PCA: the rows of parked helicopters stand out from the ground" style="width:100%;border-radius:6px;image-rendering:pixelated">
+  </div>
+  <p class="note">One tile: clean · training noise (σ = 50/255) · what the teacher sees (DINOv2 ViT-B/14 last-block patch tokens, first three principal components as RGB). Spatial distillation asks the student to reproduce this map.</p>
   <ul>
     <li><b>Heterogeneous</b> ViT→CNN transfer (most KD assumes the same architecture family).</li>
-    <li><b>50:50 mixed-noise training</b> — the teacher sees noise-free (augmented) input; the student sees half-noisy batches. Training σ=50/255 and evaluation σ=0.3 deliberately test robustness beyond the training noise.</li>
-    <li><b>Teacher input and LR</b> — [0,1] images are resized to 448 without ImageNet mean/std normalization; the adapter uses <code>lr0</code> (default 5e-5), while the model uses the <code>optimizer=auto</code> LR, as in the June original.</li>
-    <li><b>Detached at inference</b> — the deployed model is unchanged in size and speed.</li>
+    <li><b>Why centring:</b> in a diagnostic run the plain loss pulled student features toward one position-independent direction; removing the per-image mean from both sides takes that shortcut away.</li>
+    <li><b>June version:</b> CLS token, SPPF feature, MLP adapter and a distance-wise relational (RKD) loss between images. On the official split it adds nothing over noise training; the code on <code>main</code> is that version, the spatial version is on the <a href="https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026"><code>fall2026-heterogeneous-kd</code></a> branch.</li>
+    <li><b>Train σ=50/255, evaluate σ=0.3</b> — robustness is tested beyond the training noise.</li>
   </ul>
 </div></section>
 
 <section><div class="wrap">
-  <h2>Results</h2>
+  <h2>Results — official iSAID split (graduation thesis, 2026.11)</h2>
+  <p class="note">18,732 / 6,048 patches, labels fixed, Kaggle T4, 10 epochs, box mAP50, every checkpoint re-evaluated on the same noisy images. Seed 0.</p>
+  <table>
+    <tr><th class="l">Condition</th><th>Clean</th><th>Noisy (σ=0.3)</th><th>Noisy − S0</th></tr>
+    <tr><td class="l">BL0 — no noise training*</td><td>0.631</td><td>0.018</td><td>—</td></tr>
+    <tr><td class="l">S0 — noise training, no KD</td><td>0.597</td><td>0.381</td><td>—</td></tr>
+    <tr><td class="l">N1 — + relational KD (June method)</td><td>0.593</td><td>0.382</td><td>+0.001</td></tr>
+    <tr><td class="l">S1 — + plain spatial KD, λ 0.5</td><td>0.596</td><td>0.374</td><td>−0.008</td></tr>
+    <tr><td class="l">S2 — S1, teacher positions shuffled</td><td>0.591</td><td>0.384</td><td>+0.003</td></tr>
+    <tr><td class="l">X1 — + centred spatial KD, λ 2.5</td><td class="hi">0.611</td><td class="hi">0.401</td><td class="hi">+0.020</td></tr>
+    <tr><td class="l">X2 — X1, teacher positions shuffled</td><td>0.587</td><td>0.375</td><td>−0.006</td></tr>
+    <tr><td class="l">P — plain spatial KD, λ 2.5</td><td>0.606</td><td>0.391</td><td>+0.009</td></tr>
+  </table>
+  <p class="note" style="margin-top:10px">* trained on an RTX 3060 Ti with a different software stack. Seed 1: X1 − S0 = +0.010, N1 − S0 = −0.002. Paired bootstrap of X1 − S0 on seed 0: [+0.015, +0.024] (evaluation-sample variation only; likely too narrow). Raw numbers and code: <a href="https://github.com/nonojamjam/noise-robust-detection-rkd/tree/fall2026-heterogeneous-kd/fall2026">fall2026 branch</a>.</p>
+  <div style="background:#fff;border-radius:10px;padding:12px;margin:16px 0 4px"><img src="assets/sigma_curve.svg" alt="Box mAP50 versus evaluation noise sigma 0 to 0.4 for no noise training, noise training only and centred spatial KD, two seeds" style="width:100%;display:block"></div>
+  <p class="note">Same checkpoints at each evaluation σ. Centred spatial KD leads at σ = 0.1–0.3 on both seeds; at σ = 0.4 the sign depends on the seed.</p>
+  <p><b>Reading:</b> noise training does most of the work. Relational KD and plain spatial KD add nothing measurable. Centred spatial KD adds a smaller but repeated gain and also raises clean mAP; with the teacher's positions shuffled the gain disappears (seed 0). Centring and λ changed together and P lands in between, so their effects are not yet separated.</p>
+  <details style="margin-top:18px"><summary><b>June 2026 results (superseded — leaky split, inflated boxes)</b></summary>
   <h3>50-epoch comparison (not hyperparameter-matched)</h3>
   <table>
     <tr><th class="l">Condition</th><th>Clean box mAP50</th><th>Noisy box mAP50 (σ=0.3)</th></tr>
     <tr><td class="l">BaseLine0 (plain transfer)</td><td>0.2775</td><td>0.0090</td></tr>
-    <tr><td class="l">N1_MIXED (proposed)</td><td class="hi">0.4264</td><td class="hi">0.1961</td></tr>
+    <tr><td class="l">N1_MIXED</td><td>0.4264</td><td>0.1961</td></tr>
   </table>
-  <h3 style="margin-top:26px">10-epoch ablation — isolating KD vs. noise</h3>
+  <h3 style="margin-top:26px">10-epoch ablation</h3>
   <table>
-    <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean box mAP50</th><th>Noisy box mAP50</th><th>KD Δ (Clean)</th></tr>
-    <tr><td class="l">BaseLine0 ⚠️</td><td>✗</td><td>✗</td><td><s>0.1243</s></td><td><s>0.0152</s></td><td>invalid (2 epochs)</td></tr>
-    <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2849</td><td>0.0390</td><td>—</td></tr>
-    <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.1386</td><td>0.1728</td><td>—</td></tr>
-    <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2277</td><td>0.1799</td><td>+0.0897</td></tr>
+    <tr><th class="l">Condition</th><th>KD</th><th>Noise</th><th>Clean box mAP50</th><th>Noisy box mAP50</th></tr>
+    <tr><td class="l">BaseLine0 ⚠️</td><td>✗</td><td>✗</td><td><s>0.1243</s></td><td><s>0.0152</s></td></tr>
+    <tr><td class="l">C1</td><td>✅</td><td>✗</td><td>0.2849</td><td>0.0390</td></tr>
+    <tr><td class="l">A_NOISY</td><td>✗</td><td>✅</td><td>0.1386</td><td>0.1728</td></tr>
+    <tr><td class="l">N1_MIXED</td><td>✅</td><td>✅</td><td>0.2277</td><td>0.1799</td></tr>
   </table>
-  <p class="note" style="margin-top:14px">The BaseLine0 row was trained for 2 epochs, not 10, so comparisons against it are withdrawn. All numbers are single-seed (seed=0) runs.</p>
+  <p class="note" style="margin-top:14px">Kept as presented in June except the withdrawn 2-epoch baseline. Affected by all four issues below.</p>
+  </details>
 </div></section>
 
 <section><div class="wrap">
-  <h2>Known issues (found after the June presentation)</h2>
+  <h2>Known issues in the June version (all resolved by the re-run above)</h2>
   <ul>
     <li><b>10-epoch baseline was 2 epochs</b> — comparisons against it are withdrawn.</li>
     <li><b>The 50-epoch pair is not hyperparameter-matched</b> (batch 2 / imgsz 800 / AdamW vs. batch 8 / imgsz 640 / auto) — not an effect size.</li>
-    <li><b>Train/validation overlap</b> in the public dataset version used: most validation tiles are byte-identical copies of training tiles.</li>
+    <li><b>Train/validation overlap</b> in the public Kaggle conversion: 7,926 of 8,919 validation tiles are byte-identical to training tiles.</li>
     <li><b>Label format</b>: a <code>cx cy w h</code> prefix before each polygon was read as extra vertices, inflating ground-truth boxes.</li>
   </ul>
-  <p class="note">All conditions are being re-run on the official iSAID split with the label fix. The numbers on this page are preliminary.</p>
+  <p class="note">Every condition was re-run on the official iSAID scene split (1,411 / 458 scenes, no shared scene) with the label prefix removed and matched settings; those are the Results above.</p>
 </div></section>
 
 <section><div class="wrap">
@@ -150,8 +174,8 @@ python results/visualize_comparison.py --baseline /path/to/baseline.pt --propose
 
 <section><div class="wrap">
   <h2>My contribution &amp; honest limits</h2>
-  <p><b>All ML and code</b> by Juhyeok Park: the distance-wise RKD loss, a custom Ultralytics trainer (SPPF hook + MLP adapter + mixed-noise injection), and three integration issues with the Ultralytics training loop that were resolved (<code>model.loss</code> wrapping, optimizer param-group mismatch on resume, adapter-sidecar save/load), plus the ablation and evaluation design.</p>
-  <p class="note"><b>Limits (kept honest):</b> single seed, Gaussian noise + iSAID only, λ fixed at 0.5. <b>Next:</b> multi-seed + λ sweep, cross-dataset (DOTA/xView) &amp; compound degradation, and federated-learning integration for data that can't leave the node (a SCAFFOLD/FedAvg prototype exists; exploratory, not in the benchmark above).</p>
+  <p><b>All ML and code</b> by Juhyeok Park: the spatial (centred) and distance-wise RKD losses, the official-split re-run and evaluation pipeline, a custom Ultralytics trainer (SPPF hook + MLP adapter + mixed-noise injection), and three integration issues with the Ultralytics training loop that were resolved (<code>model.loss</code> wrapping, optimizer param-group mismatch on resume, adapter-sidecar save/load), plus the ablation and evaluation design.</p>
+  <p class="note"><b>Limits:</b> two training seeds for the main comparison (one for the controls), Gaussian noise + iSAID only, λ tried at 0.5 and 2.5, 10 epochs. <b>Next:</b> multi-seed + λ sweep, cross-dataset (DOTA/xView) &amp; compound degradation, and federated-learning integration for data that can't leave the node (a SCAFFOLD/FedAvg prototype exists; exploratory, not in the benchmark above).</p>
   <a class="btn" href="https://github.com/nonojamjam/noise-robust-detection-rkd">View the code on GitHub →</a>
 </div></section>
 
