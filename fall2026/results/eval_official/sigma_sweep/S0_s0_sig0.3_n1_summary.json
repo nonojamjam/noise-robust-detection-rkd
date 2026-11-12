@@ -1,0 +1,25 @@
+{
+  "name": "S0_s0_sig0.3_n1",
+  "ckpt": "ckpt10/S0.pt",
+  "data": "data_cache/isaid_fixed.yaml",
+  "eval_sigma": 0.3,
+  "seed": 1,
+  "noisy_only": true,
+  "batch": 8,
+  "imgsz": 640,
+  "summary": {
+    "noisy": {
+      "validator_map50": 0.38377021575985315,
+      "recomputed_map50": 0.38377021575985315,
+      "n_images": 6048,
+      "small_ap50": 0.24432519181968354,
+      "n_small_gt": 209747,
+      "n_gt": 235531,
+      "noise_ck": [
+        672.1508238756862,
+        1966.2703440407702,
+        3270.1175722978023
+      ]
+    }
+  }
+}

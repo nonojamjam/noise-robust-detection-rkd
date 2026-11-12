@@ -1,0 +1,27 @@
+{
+  "name": "X1_s1",
+  "ckpt": "ckpt45/X1_s1.pt",
+  "data": "data_cache/isaid_fixed.yaml",
+  "eval_sigma": 0.3,
+  "seed": 0,
+  "batch": 8,
+  "imgsz": 640,
+  "summary": {
+    "clean": {
+      "validator_map50": 0.6044629168598696,
+      "recomputed_map50": 0.6044629168598696,
+      "n_images": 6048,
+      "small_ap50": 0.41742718718737926,
+      "n_small_gt": 209747,
+      "n_gt": 235531
+    },
+    "noisy": {
+      "validator_map50": 0.39704069674070896,
+      "recomputed_map50": 0.39704069674070896,
+      "n_images": 6048,
+      "small_ap50": 0.25414943615096797,
+      "n_small_gt": 209747,
+      "n_gt": 235531
+    }
+  }
+}

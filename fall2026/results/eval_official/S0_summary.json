@@ -1,0 +1,27 @@
+{
+  "name": "S0",
+  "ckpt": "ckpt10/S0.pt",
+  "data": "/tmp/isaid_fixed.yaml",
+  "eval_sigma": 0.3,
+  "seed": 0,
+  "batch": 8,
+  "imgsz": 640,
+  "summary": {
+    "clean": {
+      "validator_map50": 0.5973517309158292,
+      "recomputed_map50": 0.5973517309158292,
+      "n_images": 6048,
+      "small_ap50": 0.42163462871004176,
+      "n_small_gt": 209747,
+      "n_gt": 235531
+    },
+    "noisy": {
+      "validator_map50": 0.3813324788523442,
+      "recomputed_map50": 0.3813324788523442,
+      "n_images": 6048,
+      "small_ap50": 0.24189947924080457,
+      "n_small_gt": 209747,
+      "n_gt": 235531
+    }
+  }
+}
